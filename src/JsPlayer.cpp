@@ -68,6 +68,7 @@ void JsPlayer::initJsApi( const v8::Handle<v8::Object>& exports )
     _jsConstructor.Reset( isolate, constructor );
 
     exports->Set( String::NewFromUtf8( isolate, "createPlayer", v8::String::kInternalizedString ), constructor );
+    exports->Set( String::NewFromUtf8( isolate, "Player", v8::String::kInternalizedString ), constructor );
 }
 
 void JsPlayer::jsCreate( const v8::FunctionCallbackInfo<v8::Value>& args )
