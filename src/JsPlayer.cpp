@@ -60,6 +60,22 @@ void JsPlayer::initJsApi( const v8::Handle<v8::Object>& exports )
     Local<ObjectTemplate> instanceTemplate = constructorTemplate->InstanceTemplate();
     instanceTemplate->SetInternalFieldCount( 1 );
 
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_VOID_PENDING", v8::String::kInternalizedString ),
+                           Integer::New( isolate, GST_STATE_VOID_PENDING ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_NULL", v8::String::kInternalizedString ),
+                           Integer::New( isolate, GST_STATE_NULL ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_READY", v8::String::kInternalizedString ),
+                           Integer::New( isolate, GST_STATE_READY ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_PAUSED", v8::String::kInternalizedString ),
+                           Integer::New( isolate, GST_STATE_PAUSED ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_PLAYING", v8::String::kInternalizedString ),
+                           Integer::New( isolate, GST_STATE_PLAYING ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+
     SET_METHOD( instanceTemplate, "parseLaunch", &JsPlayer::parseLaunch );
     SET_METHOD( instanceTemplate, "addAppSinkCallback", &JsPlayer::addAppSinkCallback );
     SET_METHOD( instanceTemplate, "setState", &JsPlayer::setState );
