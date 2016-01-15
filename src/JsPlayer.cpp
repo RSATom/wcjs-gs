@@ -60,6 +60,19 @@ void JsPlayer::initJsApi( const v8::Handle<v8::Object>& exports )
     Local<ObjectTemplate> instanceTemplate = constructorTemplate->InstanceTemplate();
     instanceTemplate->SetInternalFieldCount( 1 );
 
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "AppSinkSetup", v8::String::kInternalizedString ),
+                           Integer::New( isolate, Setup ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "AppSinkNewPreroll", v8::String::kInternalizedString ),
+                           Integer::New( isolate, NewPreroll ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "AppSinkNewSample", v8::String::kInternalizedString ),
+                           Integer::New( isolate, NewSample ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+    instanceTemplate->Set( String::NewFromUtf8( isolate, "AppSinkEos", v8::String::kInternalizedString ),
+                           Integer::New( isolate, Eos ),
+                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+
     instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_VOID_PENDING", v8::String::kInternalizedString ),
                            Integer::New( isolate, GST_STATE_VOID_PENDING ),
                            static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
