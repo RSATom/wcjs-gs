@@ -61,7 +61,7 @@ void JsPlayer::initJsApi( const v8::Handle<v8::Object>& exports )
     instanceTemplate->SetInternalFieldCount( 1 );
 
     SET_METHOD( instanceTemplate, "parseLaunch", &JsPlayer::parseLaunch );
-    SET_METHOD( instanceTemplate, "setAppSinkCallback", &JsPlayer::setAppSinkCallback );
+    SET_METHOD( instanceTemplate, "addAppSinkCallback", &JsPlayer::addAppSinkCallback );
     SET_METHOD( instanceTemplate, "setState", &JsPlayer::setState );
 
     Local<Function> constructor = constructorTemplate->GetFunction();
@@ -328,7 +328,7 @@ bool JsPlayer::parseLaunch( const std::string& pipelineDescription )
     return ( nullptr != _pipeline );
 }
 
-bool JsPlayer::setAppSinkCallback( const std::string& appSinkName, v8::Local<v8::Value> value )
+bool JsPlayer::addAppSinkCallback( const std::string& appSinkName, v8::Local<v8::Value> value )
 {
     if( !_pipeline || appSinkName.empty() )
         return false;

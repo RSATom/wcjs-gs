@@ -38,7 +38,7 @@ private:
 
     bool parseLaunch( const std::string& pipelineDescription );
 
-    bool setAppSinkCallback( const std::string& appSinkName, v8::Local<v8::Value> value );
+    bool addAppSinkCallback( const std::string& appSinkName, v8::Local<v8::Value> value );
 
     void setState( unsigned state );
 
