@@ -60,9 +60,9 @@ void JsPlayer::initJsApi( const v8::Handle<v8::Object>& exports )
     Local<ObjectTemplate> instanceTemplate = constructorTemplate->InstanceTemplate();
     instanceTemplate->SetInternalFieldCount( 1 );
 
-     SET_METHOD( instanceTemplate, "parseLaunch", &JsPlayer::parseLaunch );
-     SET_METHOD( instanceTemplate, "setAppSinkCallback", &JsPlayer::setAppSinkCallback );
-     SET_METHOD( instanceTemplate, "setState", &JsPlayer::setState );
+    SET_METHOD( instanceTemplate, "parseLaunch", &JsPlayer::parseLaunch );
+    SET_METHOD( instanceTemplate, "setAppSinkCallback", &JsPlayer::setAppSinkCallback );
+    SET_METHOD( instanceTemplate, "setState", &JsPlayer::setState );
 
     Local<Function> constructor = constructorTemplate->GetFunction();
     _jsConstructor.Reset( isolate, constructor );

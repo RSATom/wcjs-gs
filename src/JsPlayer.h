@@ -73,8 +73,7 @@ private:
             waitingSample.test_and_set();
         }
         AppSinkData( const AppSinkData& d ) = delete;
-        AppSinkData( AppSinkData&& d ) {//: {
-            callback = std::move( d.callback );
+        AppSinkData( AppSinkData&& d ) : callback( std::move( d.callback ) ) {
             waitingSample.test_and_set();
         }
 
