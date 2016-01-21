@@ -5,6 +5,7 @@
 #include <set>
 #include <map>
 #include <mutex>
+#include <atomic>
 
 #include <v8.h>
 #include <node.h>
