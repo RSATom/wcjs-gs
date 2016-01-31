@@ -1,7 +1,7 @@
 {
   "name": "wcjs-gs",
   "description": "WebChimera.js GStreamer edition",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "license" : "LGPL-2.1",
   "author": "Sergey Radionov <rsatom@gmail.com>",
   "keywords": [
