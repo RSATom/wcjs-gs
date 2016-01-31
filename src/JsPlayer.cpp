@@ -6,6 +6,15 @@
 
 #include <nah/NodeHelpers.h>
 
+#if NODE_MAJOR_VERSION > 3 || \
+    ( NODE_MAJOR_VERSION == 3 && NODE_MINOR_VERSION > 0 ) || \
+    ( NODE_MAJOR_VERSION == 3 && NODE_MINOR_VERSION == 0 && NODE_BUILD_NUMBER >= 0 )
+
+#define USE_MAYBE_LOCAL 1
+
+#endif
+
+
 ///////////////////////////////////////////////////////////////////////////////
 struct JsPlayer::AsyncData
 {
@@ -302,12 +311,19 @@ void JsPlayer::onSample( GstAppSink* appSink, GstSample* sample, bool preroll )
         Isolate* isolate = Isolate::GetCurrent();
         HandleScope scope( isolate );
 
+#if USE_MAYBE_LOCAL
         v8::MaybeLocal<v8::Object> maybeFrame =
+#else
+        v8::Local<v8::Object> frame =
+#endif
             node::Buffer::New( isolate, reinterpret_cast<char*>( mapInfo.data ), mapInfo.size,
                                [] ( char* data, void* hint ) {}, nullptr );
 
+#if USE_MAYBE_LOCAL
         Local<v8::Object> frame;
-        if( maybeFrame.ToLocal( &frame ) ) {
+        if( maybeFrame.ToLocal( &frame ) )
+#endif
+        {
             frame->ForceSet( String::NewFromUtf8( isolate, "pixelFormatName", v8::String::kInternalizedString ),
                              String::NewFromUtf8( isolate, videoInfo.finfo->name, v8::String::kNormalString ),
                              static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
