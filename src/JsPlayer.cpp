@@ -344,6 +344,12 @@ void JsPlayer::onSample( GstAppSink* appSink, GstSample* sample, bool preroll )
                                  static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
             }
 
+            if( GST_BUFFER_FLAG_IS_SET( buffer, GST_BUFFER_FLAG_HEADER ) ) {
+                frame->ForceSet( String::NewFromUtf8( isolate, "header", v8::String::kInternalizedString ),
+                                 Boolean::New( isolate, true ),
+                                 static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
+            }
+
             Local<Array> planes = Array::New( isolate, videoInfo.finfo->n_planes );
             for( guint p = 0; p < videoInfo.finfo->n_planes; ++p ) {
                 planes->Set( p, Integer::New( isolate, videoInfo.offset[p] ) );
