@@ -1,438 +1,314 @@
 #include "JsPlayer.h"
 
-#include <string.h>
-
-#include <node_buffer.h>
-
-#include <nah/NodeHelpers.h>
-
-#if NODE_MAJOR_VERSION > 3 || \
-    ( NODE_MAJOR_VERSION == 3 && NODE_MINOR_VERSION > 0 ) || \
-    ( NODE_MAJOR_VERSION == 3 && NODE_MINOR_VERSION == 0 && NODE_BUILD_NUMBER >= 0 )
-
-#define USE_MAYBE_LOCAL 1
-
-#endif
-
 
 ///////////////////////////////////////////////////////////////////////////////
 struct JsPlayer::AsyncData
 {
-    virtual void process( JsPlayer* ) = 0;
+	virtual ~AsyncData() {};
+
+	virtual void process(JsPlayer*) = 0;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
 struct JsPlayer::AppSinkEventData : public JsPlayer::AsyncData
 {
-    AppSinkEventData( GstAppSink* appSink, JsPlayer::AppSinkEvent event ) :
-        appSink( appSink), event( event ) {}
+	AppSinkEventData(GstAppSink* appSink, JsPlayer::AppSinkEvent event) :
+		appSink(appSink), event(event) {}
 
-    void process( JsPlayer* );
+	void process(JsPlayer*);
 
-    GstAppSink* appSink;
-    const JsPlayer::AppSinkEvent event;
+	GstAppSink* appSink;
+	const JsPlayer::AppSinkEvent event;
 };
 
-void JsPlayer::AppSinkEventData::process( JsPlayer* player )
+void JsPlayer::AppSinkEventData::process(JsPlayer* player)
 {
-    switch( event ) {
-     case JsPlayer::AppSinkEvent::NewPreroll:
-        player->onNewPreroll( appSink );
-        break;
-     case JsPlayer::AppSinkEvent::NewSample:
-        player->onNewSample( appSink );
-        break;
-     case JsPlayer::AppSinkEvent::Eos:
-        player->onEos( appSink );
-        break;
-    }
+	switch(event) {
+	case JsPlayer::AppSinkEvent::NewPreroll:
+		player->onNewPreroll(appSink);
+		break;
+	case JsPlayer::AppSinkEvent::NewSample:
+		player->onNewSample(appSink);
+		break;
+	case JsPlayer::AppSinkEvent::Eos:
+		player->onEos(appSink);
+		break;
+	default:
+		break;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-v8::Persistent<v8::Function> JsPlayer::_jsConstructor;
-std::set<JsPlayer*> JsPlayer::_instances;
+Napi::FunctionReference JsPlayer::_jsConstructor;
 
-void JsPlayer::initJsApi( const v8::Handle<v8::Object>& exports )
+Napi::Object JsPlayer::InitJsApi(Napi::Env env, Napi::Object exports)
 {
-    node::AtExit( [] ( void* ) { JsPlayer::closeAll(); } );
+	gst_init(0, 0);
 
-    gst_init( 0, 0 );
+	Napi::HandleScope scope(env);
 
-    using namespace v8;
+	Napi::Function func =
+		DefineClass(env, "JsPlayer", {
+			InstanceValue("GST_STATE_VOID_PENDING", ToJsValue(env, GST_STATE_VOID_PENDING)),
+			InstanceValue("GST_STATE_NULL", ToJsValue(env, GST_STATE_NULL)),
+			InstanceValue("GST_STATE_READY", ToJsValue(env, GST_STATE_READY)),
+			InstanceValue("GST_STATE_PAUSED", ToJsValue(env, GST_STATE_PAUSED)),
+			InstanceValue("GST_STATE_PLAYING", ToJsValue(env, GST_STATE_PLAYING)),
+			InstanceValue("AppSinkSetup", ToJsValue(env, Setup)),
+			InstanceValue("AppSinkNewPreroll", ToJsValue(env, NewPreroll)),
+			InstanceValue("AppSinkNewSample", ToJsValue(env, NewSample)),
+			InstanceValue("AppSinkEos", ToJsValue(env, Eos)),
+			CLASS_METHOD("parseLaunch", &JsPlayer::parseLaunch),
+			CLASS_METHOD("addAppSinkCallback", &JsPlayer::addAppSinkCallback),
+			CLASS_METHOD("setState", &JsPlayer::setState),
+		}
+	);
 
-    Isolate* isolate = Isolate::GetCurrent();
-    HandleScope scope( isolate );
+	_jsConstructor = Napi::Persistent(func);
+	_jsConstructor.SuppressDestruct();
 
-    Local<FunctionTemplate> constructorTemplate = FunctionTemplate::New( isolate, jsCreate );
-    constructorTemplate->SetClassName( String::NewFromUtf8( isolate, "Player", v8::String::kInternalizedString ) );
+	exports.Set("JsPlayer", func);
 
-    Local<ObjectTemplate> instanceTemplate = constructorTemplate->InstanceTemplate();
-    instanceTemplate->SetInternalFieldCount( 1 );
-
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "AppSinkSetup", v8::String::kInternalizedString ),
-                           Integer::New( isolate, Setup ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "AppSinkNewPreroll", v8::String::kInternalizedString ),
-                           Integer::New( isolate, NewPreroll ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "AppSinkNewSample", v8::String::kInternalizedString ),
-                           Integer::New( isolate, NewSample ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "AppSinkEos", v8::String::kInternalizedString ),
-                           Integer::New( isolate, Eos ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_VOID_PENDING", v8::String::kInternalizedString ),
-                           Integer::New( isolate, GST_STATE_VOID_PENDING ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_NULL", v8::String::kInternalizedString ),
-                           Integer::New( isolate, GST_STATE_NULL ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_READY", v8::String::kInternalizedString ),
-                           Integer::New( isolate, GST_STATE_READY ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_PAUSED", v8::String::kInternalizedString ),
-                           Integer::New( isolate, GST_STATE_PAUSED ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-    instanceTemplate->Set( String::NewFromUtf8( isolate, "GST_STATE_PLAYING", v8::String::kInternalizedString ),
-                           Integer::New( isolate, GST_STATE_PLAYING ),
-                           static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-
-    SET_METHOD( instanceTemplate, "parseLaunch", &JsPlayer::parseLaunch );
-    SET_METHOD( instanceTemplate, "addAppSinkCallback", &JsPlayer::addAppSinkCallback );
-    SET_METHOD( instanceTemplate, "setState", &JsPlayer::setState );
-
-    Local<Function> constructor = constructorTemplate->GetFunction();
-    _jsConstructor.Reset( isolate, constructor );
-
-    exports->Set( String::NewFromUtf8( isolate, "createPlayer", v8::String::kInternalizedString ), constructor );
-    exports->Set( String::NewFromUtf8( isolate, "Player", v8::String::kInternalizedString ), constructor );
+	return exports;
 }
 
-void JsPlayer::jsCreate( const v8::FunctionCallbackInfo<v8::Value>& args )
+JsPlayer::JsPlayer(const Napi::CallbackInfo& info) :
+	Napi::ObjectWrap<JsPlayer>(info),
+	_pipeline(nullptr), _firstSample(true)
 {
-    using namespace v8;
+	uv_loop_t* loop = uv_default_loop();
 
-    Isolate* isolate = Isolate::GetCurrent();
-    HandleScope scope( isolate );
-
-    Local<Object> thisObject = args.Holder();
-    if( args.IsConstructCall() ) {
-        JsPlayer* jsPlayer = new JsPlayer( thisObject );
-        args.GetReturnValue().Set( jsPlayer->handle() );
-    } else {
-        Local<Value> argv[] = { args[0] };
-        Local<Function> constructor =
-            Local<Function>::New( isolate, _jsConstructor );
-        args.GetReturnValue().Set( constructor->NewInstance( sizeof( argv ) / sizeof( argv[0] ), argv ) );
-    }
-}
-
-void JsPlayer::closeAll()
-{
-    for( JsPlayer* p : _instances ) {
-        p->close();
-    }
-
-    gst_deinit();
-}
-
-JsPlayer::JsPlayer( v8::Local<v8::Object>& thisObject ) :
-    _pipeline( nullptr ), _firstSample( true )
-{
-    Wrap( thisObject );
-
-    _instances.insert( this );
-
-    uv_loop_t* loop = uv_default_loop();
-
-    uv_async_init( loop, &_async,
-        [] ( uv_async_t* handle ) {
-            if( handle->data )
-                reinterpret_cast<JsPlayer*>( handle->data )->handleAsync();
-        }
-    );
-    _async.data = this;
-
+	uv_async_init(loop, &_async,
+		[] (uv_async_t* handle) {
+			if(handle->data)
+				reinterpret_cast<JsPlayer*>(handle->data)->handleAsync();
+		}
+	);
+	_async.data = this;
 }
 
 JsPlayer::~JsPlayer()
 {
-    close();
-
-    _instances.erase( this );
+	close();
 }
 
 void JsPlayer::close()
 {
-    _async.data = nullptr;
-    uv_close( reinterpret_cast<uv_handle_t*>( &_async ), 0 );
+	_async.data = nullptr;
+	uv_close(reinterpret_cast<uv_handle_t*>(&_async), 0);
 }
 
 void JsPlayer::handleAsync()
 {
-    while( !_asyncData.empty() ) {
-        std::deque<std::unique_ptr<AsyncData> > tmpData;
-        _asyncDataGuard.lock();
-        _asyncData.swap( tmpData );
-        _asyncDataGuard.unlock();
+	while(!_asyncData.empty()) {
+		std::deque<std::unique_ptr<AsyncData> > tmpData;
+		_asyncDataGuard.lock();
+		_asyncData.swap(tmpData);
+		_asyncDataGuard.unlock();
 
-        for( const auto& i: tmpData ) {
-            i->process( this );
-        }
-    }
+		for(const auto& i: tmpData) {
+			i->process(this);
+		}
+	}
 }
 
-GstFlowReturn JsPlayer::onNewPrerollProxy( GstAppSink *appSink, gpointer userData )
+GstFlowReturn JsPlayer::onNewPrerollProxy(GstAppSink *appSink, gpointer userData)
 {
-    JsPlayer* player = static_cast<JsPlayer*>( userData );
+	JsPlayer* player = static_cast<JsPlayer*>(userData);
 
-    player->_asyncDataGuard.lock();
-    player->_asyncData.emplace_back( new AppSinkEventData( appSink, NewPreroll ) );
-    player->_asyncDataGuard.unlock();
-    uv_async_send( &player->_async );
+	player->_asyncDataGuard.lock();
+	player->_asyncData.emplace_back(new AppSinkEventData(appSink, NewPreroll));
+	player->_asyncDataGuard.unlock();
+	uv_async_send(&player->_async);
 
-    return GST_FLOW_OK;
+	return GST_FLOW_OK;
 }
 
-GstFlowReturn JsPlayer::onNewSampleProxy( GstAppSink *appSink, gpointer userData )
+GstFlowReturn JsPlayer::onNewSampleProxy(GstAppSink *appSink, gpointer userData)
 {
-    JsPlayer* player = static_cast<JsPlayer*>( userData );
+	JsPlayer* player = static_cast<JsPlayer*>(userData);
 
-    player->_appSinks[appSink].waitingSample.clear();
-    player->_asyncDataGuard.lock();
-    player->_asyncData.emplace_back( new AppSinkEventData( appSink, NewSample ) );
-    player->_asyncDataGuard.unlock();
-    uv_async_send( &player->_async );
+	player->_appSinks[appSink].waitingSample.clear();
+	player->_asyncDataGuard.lock();
+	player->_asyncData.emplace_back(new AppSinkEventData(appSink, NewSample));
+	player->_asyncDataGuard.unlock();
+	uv_async_send(&player->_async);
 
-    return GST_FLOW_OK;
+	return GST_FLOW_OK;
 }
 
-void JsPlayer::onEosProxy( GstAppSink* appSink, gpointer userData )
+void JsPlayer::onEosProxy(GstAppSink* appSink, gpointer userData)
 {
-    JsPlayer* player = static_cast<JsPlayer*>( userData );
+	JsPlayer* player = static_cast<JsPlayer*>(userData);
 
-    player->_asyncDataGuard.lock();
-    player->_asyncData.emplace_back( new AppSinkEventData( appSink, Eos ) );
-    player->_asyncDataGuard.unlock();
-    uv_async_send( &player->_async );
+	player->_asyncDataGuard.lock();
+	player->_asyncData.emplace_back(new AppSinkEventData(appSink, Eos));
+	player->_asyncDataGuard.unlock();
+	uv_async_send(&player->_async);
 }
 
-void JsPlayer::callCallback( GstAppSink* appSink, JsPlayer::AppSinkEvent event,
-                             std::initializer_list<v8::Local<v8::Value> > list )
+void JsPlayer::onSetup(GstAppSink* appSink, const GstVideoInfo& videoInfo)
 {
-    auto it = _appSinks.find( appSink );
-    if( _appSinks.end() == it )
-        return;
+	if(!appSink)
+		return;
 
-    if( it->second.callback.IsEmpty() )
-        return;
+	_firstSample = false;
 
-    using namespace v8;
+	auto it = _appSinks.find(appSink);
+	if(_appSinks.end() == it)
+		return;
 
-    Isolate* isolate = Isolate::GetCurrent();
-    HandleScope scope( isolate );
+	if(it->second.callback.IsEmpty())
+		return;
 
-    Local<Function> callbackFunc =
-        Local<Function>::New( isolate, _appSinks[appSink].callback );
-
-    std::vector<v8::Local<v8::Value> > argList;
-
-    argList.push_back( Integer::New( isolate, event ) );
-    argList.insert( argList.end(), list );
-    callbackFunc->Call( handle(), static_cast<int>( argList.size() ), argList.data() );
+	it->second.callback.Call({
+		ToJsValue(Env(), Setup),
+		ToJsValue(Env(), videoInfo.finfo->name),
+		ToJsValue(Env(), videoInfo.width),
+		ToJsValue(Env(), videoInfo.height),
+		ToJsValue(Env(), videoInfo.finfo->format)
+	});
 }
 
-void JsPlayer::onSetup( GstAppSink* appSink, const GstVideoInfo& videoInfo )
+void JsPlayer::onNewPreroll(GstAppSink* appSink)
 {
-    if( !appSink )
-        return;
+	GstSample* sample = gst_app_sink_pull_preroll(appSink);
 
-    using namespace v8;
+	onSample(appSink, sample, true);
 
-    Isolate* isolate = Isolate::GetCurrent();
-    HandleScope scope( isolate );
-
-    _firstSample = false;
-
-    callCallback( appSink, Setup,
-                  { String::NewFromUtf8( isolate, videoInfo.finfo->name, v8::String::kNormalString ),
-                    Integer::New( isolate, videoInfo.width ),
-                    Integer::New( isolate, videoInfo.height ),
-                    Integer::New( isolate, videoInfo.finfo->format ) } );
+	gst_sample_unref(sample);
 }
 
-void JsPlayer::onNewPreroll( GstAppSink* appSink )
+void JsPlayer::onNewSample(GstAppSink* appSink)
 {
-    GstSample* sample = gst_app_sink_pull_preroll( appSink );
+	if(_appSinks[appSink].waitingSample.test_and_set())
+		return;
 
-    onSample( appSink, sample, true );
+	GstSample* sample = gst_app_sink_pull_sample(appSink);
 
-    gst_sample_unref( sample );
+	_appSinks[appSink].waitingSample.test_and_set();
+
+	onSample(appSink, sample, false);
+
+	gst_sample_unref(sample);
 }
 
-void JsPlayer::onNewSample( GstAppSink* appSink )
+void JsPlayer::onSample(GstAppSink* appSink, GstSample* sample, bool preroll)
 {
-    if( _appSinks[appSink].waitingSample.test_and_set() )
-        return;
+	if(!sample)
+		return;
 
-    GstSample* sample = gst_app_sink_pull_sample( appSink );
+	GstVideoInfo videoInfo;
 
-    _appSinks[appSink].waitingSample.test_and_set();
+	GstCaps* caps = gst_sample_get_caps(sample);
+	if(!caps || !gst_video_info_from_caps(&videoInfo, caps))
+		return;
 
-    onSample( appSink, sample, false );
+	if(_firstSample)
+		onSetup(appSink, videoInfo);
 
-    gst_sample_unref( sample );
+	GstBuffer* buffer = gst_sample_get_buffer(sample);
+
+	if(!buffer)
+		return;
+
+	auto it = _appSinks.find(appSink);
+	if(_appSinks.end() == it)
+		return;
+
+	if(it->second.callback.IsEmpty())
+		return;
+
+	GstMapInfo mapInfo;
+	if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
+		Napi::Buffer<unsigned char> frame =
+			Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
+		Napi::Object frameObject(Env(), frame);
+		frameObject.Set("width", ToJsValue(Env(), videoInfo.width));
+		frameObject.Set("height", ToJsValue(Env(), videoInfo.height));
+
+		Napi::Array planesArray = Napi::Array::New(Env(), videoInfo.finfo->n_planes);
+		for(guint p = 0; p < videoInfo.finfo->n_planes; ++p)
+			planesArray.Set(p, ToJsValue(Env(), static_cast<int>(videoInfo.offset[p])));
+
+		frameObject.Set("planes", planesArray);
+
+		it->second.callback.Call({
+			ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
+			frameObject,
+		});
+		gst_buffer_unmap(buffer, &mapInfo);
+	}
 }
 
-void JsPlayer::onSample( GstAppSink* appSink, GstSample* sample, bool preroll )
+void JsPlayer::onEos(GstAppSink* appSink)
 {
-    if( !sample )
-        return;
+	if(!appSink)
+		return;
 
-    GstVideoInfo videoInfo;
+	auto it = _appSinks.find(appSink);
+	if(_appSinks.end() == it)
+		return;
 
-    GstCaps* caps = gst_sample_get_caps( sample );
-    if( !caps || !gst_video_info_from_caps( &videoInfo, caps ) )
-        return;
+	if(it->second.callback.IsEmpty())
+		return;
 
-    if( _firstSample )
-        onSetup( appSink, videoInfo );
-
-    GstBuffer* buffer = gst_sample_get_buffer( sample );
-
-    if( !buffer )
-        return;
-
-    GstMapInfo mapInfo;
-    if( gst_buffer_map( buffer, &mapInfo, GST_MAP_READ ) ) {
-        using namespace v8;
-
-        Isolate* isolate = Isolate::GetCurrent();
-        HandleScope scope( isolate );
-
-#if USE_MAYBE_LOCAL
-        v8::MaybeLocal<v8::Object> maybeFrame =
-#else
-        v8::Local<v8::Object> frame =
-#endif
-            node::Buffer::New( isolate, reinterpret_cast<char*>( mapInfo.data ), mapInfo.size,
-                               [] ( char* data, void* hint ) {}, nullptr );
-
-#if USE_MAYBE_LOCAL
-        Local<v8::Object> frame;
-        if( maybeFrame.ToLocal( &frame ) )
-#endif
-        {
-            frame->ForceSet( String::NewFromUtf8( isolate, "pixelFormatName", v8::String::kInternalizedString ),
-                             String::NewFromUtf8( isolate, videoInfo.finfo->name, v8::String::kNormalString ),
-                             static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-            frame->ForceSet( String::NewFromUtf8( isolate, "pixelFormat", v8::String::kInternalizedString ),
-                             Integer::New( isolate, videoInfo.finfo->format ),
-                             static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-
-            frame->ForceSet( String::NewFromUtf8( isolate, "width", v8::String::kInternalizedString ),
-                             Integer::New( isolate, videoInfo.width ),
-                             static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-            frame->ForceSet( String::NewFromUtf8( isolate, "height", v8::String::kInternalizedString ),
-                             Integer::New( isolate, videoInfo.height ),
-                             static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-
-            if( !GST_BUFFER_FLAG_IS_SET( buffer, GST_BUFFER_FLAG_DELTA_UNIT ) ) {
-                frame->ForceSet( String::NewFromUtf8( isolate, "key", v8::String::kInternalizedString ),
-                                 Boolean::New( isolate, true ),
-                                 static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-            }
-
-            if( GST_BUFFER_FLAG_IS_SET( buffer, GST_BUFFER_FLAG_HEADER ) ) {
-                frame->ForceSet( String::NewFromUtf8( isolate, "header", v8::String::kInternalizedString ),
-                                 Boolean::New( isolate, true ),
-                                 static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-            }
-
-            if( GST_BUFFER_DTS_IS_VALID( buffer ) ) {
-                frame->ForceSet( String::NewFromUtf8( isolate, "dts", v8::String::kInternalizedString ),
-                                 Number::New( isolate, static_cast<double>( GST_BUFFER_DTS( buffer ) ) ),
-                                 static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-            }
-
-            if( GST_BUFFER_PTS_IS_VALID( buffer ) ) {
-                frame->ForceSet( String::NewFromUtf8( isolate, "pts", v8::String::kInternalizedString ),
-                                 Number::New( isolate, static_cast<double>( GST_BUFFER_PTS( buffer ) ) ),
-                                 static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-            }
-
-            Local<Array> planes = Array::New( isolate, videoInfo.finfo->n_planes );
-            for( guint p = 0; p < videoInfo.finfo->n_planes; ++p ) {
-                planes->Set( p, Integer::New( isolate, videoInfo.offset[p] ) );
-            }
-
-            frame->ForceSet( String::NewFromUtf8( isolate, "planes", v8::String::kInternalizedString ),
-                             planes,
-                             static_cast<v8::PropertyAttribute>( ReadOnly | DontDelete ) );
-
-            callCallback( appSink, ( preroll ? NewPreroll : NewSample ), { frame } );
-        }
-
-        gst_buffer_unmap( buffer, &mapInfo );
-    }
+	it->second.callback.Call({
+		ToJsValue(Env(), Eos),
+	});
 }
 
-void JsPlayer::onEos( GstAppSink* appSink )
+bool JsPlayer::parseLaunch(const std::string& pipelineDescription)
 {
-    callCallback( appSink, Eos );
+	if(_pipeline) {
+		_appSinks.clear();
+		gst_object_unref(_pipeline);
+		_pipeline = nullptr;
+		_firstSample = true;
+	}
+
+	GError* error = nullptr;
+	_pipeline = gst_parse_launch(pipelineDescription.c_str(), &error);
+
+	return (nullptr != _pipeline);
 }
 
-bool JsPlayer::parseLaunch( const std::string& pipelineDescription )
+bool JsPlayer::addAppSinkCallback(
+	const std::string& appSinkName,
+	const Napi::Function& callback)
 {
-    if( _pipeline ) {
-        _appSinks.clear();
-        gst_object_unref( _pipeline );
-        _pipeline = nullptr;
-        _firstSample = true;
-    }
+	if(!_pipeline || appSinkName.empty())
+		return false;
 
-    GError* error = nullptr;
-    _pipeline = gst_parse_launch( pipelineDescription.c_str(), &error );
+	GstElement* sink = gst_bin_get_by_name(GST_BIN(_pipeline), appSinkName.c_str());
+	if(!sink)
+		return false;
 
-    return ( nullptr != _pipeline );
+	GstAppSink* appSink = GST_APP_SINK_CAST(sink);
+	if(!appSink)
+		return appSink;
+
+	if(callback.IsEmpty())
+		return false;
+
+	auto it = _appSinks.find(appSink);
+	if(_appSinks.end() == it) {
+		gst_app_sink_set_drop(appSink, true);
+		gst_app_sink_set_max_buffers(appSink, 1);
+		GstAppSinkCallbacks callbacks = { onEosProxy, onNewPrerollProxy, onNewSampleProxy };
+		gst_app_sink_set_callbacks(appSink, &callbacks, this, nullptr);
+		it = _appSinks.emplace(appSink, AppSinkData()).first;
+	}
+
+	AppSinkData& sinkData = it->second;
+	sinkData.callback = Napi::Persistent(callback);
+	sinkData.waitingSample.test_and_set();
+
+	return true;
 }
 
-bool JsPlayer::addAppSinkCallback( const std::string& appSinkName, v8::Local<v8::Value> value )
+void JsPlayer::setState(unsigned state)
 {
-    if( !_pipeline || appSinkName.empty() )
-        return false;
-
-    GstElement* sink = gst_bin_get_by_name( GST_BIN( _pipeline ), appSinkName.c_str() );
-    if( !sink )
-        return false;
-
-    GstAppSink* appSink = GST_APP_SINK_CAST( sink );
-    if( !appSink )
-        return appSink;
-
-    using namespace v8;
-
-    Local<Function> callbackFunc = Local<Function>::Cast( value );
-    if( callbackFunc.IsEmpty() )
-        return false;
-
-    auto it = _appSinks.find( appSink );
-    if( _appSinks.end() == it ) {
-        gst_app_sink_set_drop( appSink, true );
-        gst_app_sink_set_max_buffers( appSink, 1 );
-        GstAppSinkCallbacks callbacks = { onEosProxy, onNewPrerollProxy, onNewSampleProxy };
-        gst_app_sink_set_callbacks( appSink, &callbacks, this, nullptr );
-        it = _appSinks.emplace( appSink, AppSinkData() ).first;
-    }
-
-    AppSinkData& sinkData = it->second;
-    sinkData.callback.Reset( Isolate::GetCurrent(), callbackFunc );
-    sinkData.waitingSample.test_and_set();
-}
-
-void JsPlayer::setState( unsigned state )
-{
-    if( _pipeline )
-        gst_element_set_state( _pipeline, static_cast<GstState>( state ) );
+	if(_pipeline)
+		gst_element_set_state(_pipeline, static_cast<GstState>(state));
 }

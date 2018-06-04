@@ -1,11 +1,11 @@
-#include <node.h>
-#include <v8.h>
+#include <napi.h>
 
 #include "JsPlayer.h"
 
-void init( v8::Handle<v8::Object> exports, v8::Handle<v8::Object> module )
+
+Napi::Object Init(Napi::Env env, Napi::Object exports)
 {
-    JsPlayer::initJsApi( exports );
+	return JsPlayer::InitJsApi(env, exports);
 }
 
-NODE_MODULE( wcjs_gs, init )
+NODE_API_MODULE(wcjs_gs, Init)

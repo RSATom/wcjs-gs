@@ -1,7 +1,7 @@
 {
   "name": "wcjs-gs",
   "description": "WebChimera.js GStreamer edition",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "license" : "LGPL-2.1",
   "author": "Sergey Radionov <rsatom@gmail.com>",
   "keywords": [
@@ -14,9 +14,13 @@
   },
   "dependencies": {
     "bindings": "~1.2.1",
-    "cmake-js": "1.1.1"
+    "cmake-js": "*"
   },
   "scripts": {
     "install": "node rebuild.js"
+  },
+  "devDependencies": {
+    "node-addon-api": "*",
+    "node-addon-api-helpers": "*"
   }
 }

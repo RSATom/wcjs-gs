@@ -1,3 +1,0 @@
-[submodule "deps/nah"]
-	path = deps/nah
-	url = https://github.com/RSATom/node-addon-helpers.git
