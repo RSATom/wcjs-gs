@@ -14,13 +14,11 @@
   },
   "dependencies": {
     "bindings": "~1.2.1",
-    "cmake-js": "*"
+    "cmake-js": "*",
+    "node-addon-api": "*",
+    "node-addon-api-helpers": "*"
   },
   "scripts": {
     "install": "node rebuild.js"
-  },
-  "devDependencies": {
-    "node-addon-api": "*",
-    "node-addon-api-helpers": "*"
   }
 }
