@@ -13,6 +13,7 @@
 
 #include <gst/gst.h>
 #include <gst/video/video.h>
+#include <gst/audio/audio.h>
 #include <gst/app/gstappsink.h>
 
 
@@ -47,36 +48,58 @@ private:
 	static GstFlowReturn onNewPrerollProxy(GstAppSink *appsink, gpointer userData);
 	static GstFlowReturn onNewSampleProxy(GstAppSink *appsink, gpointer userData);
 
+	struct AppSinkData;
 	struct AsyncData;
 	struct AppSinkEventData;
 
 	void handleAsync();
 
-	void onSetup(GstAppSink*, const GstVideoInfo&);
+	void onSetup(
+		AppSinkData*,
+		const GstVideoInfo&);
+	void onSetup(
+		AppSinkData*,
+		const GstAudioInfo&);
+	void onSetup(
+		AppSinkData*,
+		const gchar* type,
+		const gchar* format);
 	void onNewPreroll(GstAppSink*);
 	void onNewSample(GstAppSink*);
 	void onEos(GstAppSink*);
 
 	void onSample(GstAppSink*, GstSample*, bool preroll);
+	void onVideoSample(
+		AppSinkData*,
+		GstSample*,
+		bool preroll,
+		GstCaps*,
+		const gchar* format);
+	void onAudioSample(
+		AppSinkData*,
+		GstSample*,
+		bool preroll,
+		GstCaps*,
+		const gchar* format);
 
 private:
 	GstElement* _pipeline;
 
 	struct AppSinkData {
-		AppSinkData() {
-			waitingSample.test_and_set();
-		}
+		AppSinkData() :
+			firstSample(true)
+			{ waitingSample.test_and_set(); }
 		AppSinkData(const AppSinkData& d) = delete;
-		AppSinkData(AppSinkData&& d) : callback(std::move(d.callback)) {
-			waitingSample.test_and_set();
-		}
+		AppSinkData(AppSinkData&& d) :
+			firstSample(true), callback(std::move(d.callback))
+			{ waitingSample.test_and_set(); }
 
+		bool firstSample;
 		std::atomic_flag waitingSample;
 		Napi::FunctionReference callback;
 	};
 
 	std::map<GstAppSink*, AppSinkData> _appSinks;
-	bool _firstSample;
 
 	uv_async_t _async;
 	std::mutex _asyncDataGuard;

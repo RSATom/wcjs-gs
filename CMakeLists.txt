@@ -8,6 +8,7 @@ find_package(PkgConfig REQUIRED)
 pkg_search_module(GSTREAMER REQUIRED gstreamer-1.0)
 pkg_search_module(GSTREAMER_APP REQUIRED gstreamer-app-1.0)
 pkg_search_module(GSTREAMER_VIDEO_META REQUIRED gstreamer-video-1.0)
+pkg_search_module(GSTREAMER_AUDIO_META REQUIRED gstreamer-audio-1.0)
 
 file(GLOB SOURCE_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     src/[^.]*.cpp
@@ -32,7 +33,11 @@ else()
 	message(FATAL_ERROR "Can't locate node_modules")
 endif()
 target_link_libraries(${PROJECT_NAME} ${CMAKE_JS_LIB})
-target_link_libraries(${PROJECT_NAME} ${GSTREAMER_LIBRARIES} ${GSTREAMER_APP_LIBRARIES} ${GSTREAMER_VIDEO_META_LIBRARIES})
+target_link_libraries(${PROJECT_NAME}
+	${GSTREAMER_LIBRARIES}
+	${GSTREAMER_APP_LIBRARIES}
+	${GSTREAMER_VIDEO_META_LIBRARIES}
+	${GSTREAMER_AUDIO_META_LIBRARIES})
 
 #get_cmake_property( _variableNames VARIABLES )
 #foreach( _variableName ${_variableNames} )
