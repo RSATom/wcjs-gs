@@ -100,6 +100,8 @@ void JsPlayer::close()
 
 void JsPlayer::handleAsync()
 {
+	Napi::HandleScope scope(Env());
+
 	while(!_asyncData.empty()) {
 		std::deque<std::unique_ptr<AsyncData> > tmpData;
 		_asyncDataGuard.lock();
