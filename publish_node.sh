@@ -7,7 +7,7 @@ set -e
 rm -r ./dist || true
 mkdir dist
 
-cp ./build/Release/wcjs-gs.node ./dist/
+cp ./build/Release/wcjs-gs.node ./README.md ./dist/
 
 cat <<EOF > ./dist/index.js
 module.exports = require("./wcjs-gs.node");
