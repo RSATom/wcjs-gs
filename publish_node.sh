@@ -10,7 +10,7 @@ mkdir dist
 cp ./build/Release/wcjs-gs.node ./dist/
 
 cat <<EOF > ./dist/index.js
-module.exports = ("./wcjs-gs.node");
+module.exports = require("./wcjs-gs.node");
 EOF
 
 cat <<EOF > ./dist/package.json
