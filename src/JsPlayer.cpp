@@ -360,6 +360,47 @@ void JsPlayer::onVideoSample(
 	}
 }
 
+void JsPlayer::onOtherSample(
+	AppSinkData* sinkData,
+	GstSample* sample,
+	bool preroll,
+	GstCaps* caps,
+	const gchar* capsName)
+{
+	if(!sinkData || sinkData->callback.IsEmpty())
+		return;
+
+	GstBuffer* buffer = gst_sample_get_buffer(sample);
+
+	if(!buffer)
+		return;
+
+	const gchar* format = g_strstr_len(capsName, -1, "/");
+	if(!format)
+		return;
+
+	std::string type(capsName, format - capsName);
+	++format;
+
+	if(sinkData->firstSample)
+		onSetup(sinkData, type.c_str(), format);
+
+	GstMapInfo mapInfo;
+	if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
+		Napi::Buffer<unsigned char> sample =
+			Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
+		Napi::Object sampleObject(Env(), sample);
+		sampleObject.Set("type", ToJsValue(Env(), type.c_str()));
+		sampleObject.Set("format", ToJsValue(Env(), format));
+
+		sinkData->callback.Call({
+			ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
+			sampleObject,
+		});
+		gst_buffer_unmap(buffer, &mapInfo);
+	}
+}
+
 void JsPlayer::onSample(GstAppSink* appSink, GstSample* sample, bool preroll)
 {
 	if(!appSink || !sample)
@@ -382,6 +423,8 @@ void JsPlayer::onSample(GstAppSink* appSink, GstSample* sample, bool preroll)
 		onAudioSample(&sinkData, sample, preroll, caps, capsName + sizeof("audio"));
 	else if(g_str_has_prefix(capsName, "video/"))
 		onVideoSample(&sinkData, sample, preroll, caps, capsName + sizeof("video"));
+	else
+		onOtherSample(&sinkData, sample, preroll, caps, capsName);
 }
 
 void JsPlayer::onEos(GstAppSink* appSink)

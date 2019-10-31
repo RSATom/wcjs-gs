@@ -81,6 +81,12 @@ private:
 		bool preroll,
 		GstCaps*,
 		const gchar* format);
+	void onOtherSample(
+		AppSinkData*,
+		GstSample*,
+		bool preroll,
+		GstCaps*,
+		const gchar* capsName);
 
 private:
 	GstElement* _pipeline;
