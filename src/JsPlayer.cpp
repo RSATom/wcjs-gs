@@ -101,6 +101,10 @@ void JsPlayer::cleanup()
 		gst_object_unref(_pipeline);
 		_pipeline = nullptr;
 	}
+
+	_asyncDataGuard.lock();
+	_asyncData.clear();
+	_asyncDataGuard.unlock();
 }
 
 void JsPlayer::close()
