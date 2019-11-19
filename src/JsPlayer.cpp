@@ -109,6 +109,8 @@ void JsPlayer::cleanup()
 
 void JsPlayer::close()
 {
+	cleanup();
+
 	_async.data = nullptr;
 	uv_close(reinterpret_cast<uv_handle_t*>(&_async), 0);
 }
