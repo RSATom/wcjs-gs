@@ -92,6 +92,17 @@ JsPlayer::~JsPlayer()
 	close();
 }
 
+void JsPlayer::cleanup()
+{
+	if(_pipeline) {
+		setState(GST_STATE_NULL);
+
+		_appSinks.clear();
+		gst_object_unref(_pipeline);
+		_pipeline = nullptr;
+	}
+}
+
 void JsPlayer::close()
 {
 	_async.data = nullptr;
@@ -446,11 +457,7 @@ void JsPlayer::onEos(GstAppSink* appSink)
 
 bool JsPlayer::parseLaunch(const std::string& pipelineDescription)
 {
-	if(_pipeline) {
-		_appSinks.clear();
-		gst_object_unref(_pipeline);
-		_pipeline = nullptr;
-	}
+	cleanup();
 
 	GError* error = nullptr;
 	_pipeline = gst_parse_launch(pipelineDescription.c_str(), &error);

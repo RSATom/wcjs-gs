@@ -88,6 +88,8 @@ private:
 		GstCaps*,
 		const gchar* capsName);
 
+	void cleanup();
+
 private:
 	GstElement* _pipeline;
 
