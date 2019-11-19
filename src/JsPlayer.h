@@ -109,7 +109,7 @@ private:
 
 	std::map<GstAppSink*, AppSinkData> _appSinks;
 
-	uv_async_t _async;
+	uv_async_t* _async = nullptr;
 	std::mutex _asyncDataGuard;
 	std::deque<std::unique_ptr<AsyncData>> _asyncData;
 };

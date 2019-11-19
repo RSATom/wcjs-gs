@@ -78,13 +78,14 @@ JsPlayer::JsPlayer(const Napi::CallbackInfo& info) :
 {
 	uv_loop_t* loop = uv_default_loop();
 
-	uv_async_init(loop, &_async,
+	_async = new uv_async_t;
+	uv_async_init(loop, _async,
 		[] (uv_async_t* handle) {
 			if(handle->data)
 				reinterpret_cast<JsPlayer*>(handle->data)->handleAsync();
 		}
 	);
-	_async.data = this;
+	_async->data = this;
 }
 
 JsPlayer::~JsPlayer()
@@ -111,8 +112,13 @@ void JsPlayer::close()
 {
 	cleanup();
 
-	_async.data = nullptr;
-	uv_close(reinterpret_cast<uv_handle_t*>(&_async), 0);
+	_async->data = nullptr;
+	uv_close(
+		reinterpret_cast<uv_handle_t*>(_async),
+		[] (uv_handle_s* handle) {
+			delete static_cast<uv_handle_t*>(handle);
+		});
+	_async = nullptr;
 }
 
 void JsPlayer::handleAsync()
@@ -138,7 +144,7 @@ GstFlowReturn JsPlayer::onNewPrerollProxy(GstAppSink *appSink, gpointer userData
 	player->_asyncDataGuard.lock();
 	player->_asyncData.emplace_back(new AppSinkEventData(appSink, NewPreroll));
 	player->_asyncDataGuard.unlock();
-	uv_async_send(&player->_async);
+	uv_async_send(player->_async);
 
 	return GST_FLOW_OK;
 }
@@ -151,7 +157,7 @@ GstFlowReturn JsPlayer::onNewSampleProxy(GstAppSink *appSink, gpointer userData)
 	player->_asyncDataGuard.lock();
 	player->_asyncData.emplace_back(new AppSinkEventData(appSink, NewSample));
 	player->_asyncDataGuard.unlock();
-	uv_async_send(&player->_async);
+	uv_async_send(player->_async);
 
 	return GST_FLOW_OK;
 }
@@ -163,7 +169,7 @@ void JsPlayer::onEosProxy(GstAppSink* appSink, gpointer userData)
 	player->_asyncDataGuard.lock();
 	player->_asyncData.emplace_back(new AppSinkEventData(appSink, Eos));
 	player->_asyncDataGuard.unlock();
-	uv_async_send(&player->_async);
+	uv_async_send(player->_async);
 }
 
 void JsPlayer::onSetup(
