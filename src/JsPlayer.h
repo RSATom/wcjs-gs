@@ -43,6 +43,8 @@ private:
 
 	void setState(unsigned state);
 
+	void sendEos();
+
 private:
 	static GstBusSyncReply onBusMessageProxy(GstBus*, GstMessage*, gpointer userData);
 	static void onEosProxy(GstAppSink* appSink, gpointer userData);

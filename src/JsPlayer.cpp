@@ -77,6 +77,7 @@ Napi::Object JsPlayer::InitJsApi(Napi::Env env, Napi::Object exports)
 			CLASS_METHOD("parseLaunch", &JsPlayer::parseLaunch),
 			CLASS_METHOD("addAppSinkCallback", &JsPlayer::addAppSinkCallback),
 			CLASS_METHOD("setState", &JsPlayer::setState),
+			CLASS_METHOD("sendEos", &JsPlayer::sendEos),
 		}
 	);
 
@@ -578,4 +579,10 @@ void JsPlayer::setState(unsigned state)
 {
 	if(_pipeline)
 		gst_element_set_state(_pipeline, static_cast<GstState>(state));
+}
+
+void JsPlayer::sendEos()
+{
+	if(_pipeline)
+		gst_element_send_event(_pipeline, gst_event_new_eos());
 }
