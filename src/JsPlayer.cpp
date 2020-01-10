@@ -39,6 +39,22 @@ void JsPlayer::AppSinkEventData::process(JsPlayer* player)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+struct JsPlayer::BusMessageData : public JsPlayer::AsyncData
+{
+	BusMessageData(GstMessageType type) :
+		type(type) {}
+
+	void process(JsPlayer*);
+
+	const GstMessageType type;
+};
+
+void JsPlayer::BusMessageData::process(JsPlayer* player)
+{
+	player->onBusMessage(type);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 Napi::FunctionReference JsPlayer::_jsConstructor;
 
 Napi::Object JsPlayer::InitJsApi(Napi::Env env, Napi::Object exports)
@@ -76,6 +92,12 @@ JsPlayer::JsPlayer(const Napi::CallbackInfo& info) :
 	Napi::ObjectWrap<JsPlayer>(info),
 	_pipeline(nullptr)
 {
+	if(info.Length() > 0) {
+		Napi::Value arg0 = info[0];
+		if(arg0.IsFunction())
+			_eosCallback = Napi::Persistent(arg0.As<Napi::Function>());
+	}
+
 	uv_loop_t* loop = uv_default_loop();
 
 	_async = new uv_async_t;
@@ -137,6 +159,30 @@ void JsPlayer::handleAsync()
 	}
 }
 
+GstBusSyncReply JsPlayer::onBusMessageProxy(GstBus*, GstMessage* message, gpointer userData)
+{
+	JsPlayer* player = static_cast<JsPlayer*>(userData);
+
+	std::unique_ptr<BusMessageData> dataPtr;
+
+	const GstMessageType type = GST_MESSAGE_TYPE(message);
+	switch(type) {
+	case GST_MESSAGE_EOS:
+		dataPtr.reset(new BusMessageData(type));
+		break;
+	}
+
+	if(!dataPtr)
+		return GST_BUS_PASS;
+
+	player->_asyncDataGuard.lock();
+	player->_asyncData.emplace_back(std::move(dataPtr));
+	player->_asyncDataGuard.unlock();
+	uv_async_send(player->_async);
+
+	return GST_BUS_PASS;
+}
+
 GstFlowReturn JsPlayer::onNewPrerollProxy(GstAppSink *appSink, gpointer userData)
 {
 	JsPlayer* player = static_cast<JsPlayer*>(userData);
@@ -170,6 +216,16 @@ void JsPlayer::onEosProxy(GstAppSink* appSink, gpointer userData)
 	player->_asyncData.emplace_back(new AppSinkEventData(appSink, Eos));
 	player->_asyncDataGuard.unlock();
 	uv_async_send(player->_async);
+}
+
+void JsPlayer::onBusMessage(GstMessageType type)
+{
+	switch(type) {
+	case GST_MESSAGE_EOS:
+		if(!_eosCallback.IsEmpty())
+			_eosCallback.Call({});
+		break;
+	}
 }
 
 void JsPlayer::onSetup(
@@ -474,7 +530,14 @@ bool JsPlayer::parseLaunch(const std::string& pipelineDescription)
 	GError* error = nullptr;
 	_pipeline = gst_parse_launch(pipelineDescription.c_str(), &error);
 
-	return (nullptr != _pipeline);
+	if(!_pipeline)
+		return false;
+
+	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(_pipeline));
+	gst_bus_set_sync_handler(bus, onBusMessageProxy, this, nullptr);
+	gst_object_unref(bus);
+
+	return true;
 }
 
 bool JsPlayer::addAppSinkCallback(

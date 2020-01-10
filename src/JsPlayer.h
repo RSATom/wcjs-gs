@@ -44,6 +44,7 @@ private:
 	void setState(unsigned state);
 
 private:
+	static GstBusSyncReply onBusMessageProxy(GstBus*, GstMessage*, gpointer userData);
 	static void onEosProxy(GstAppSink* appSink, gpointer userData);
 	static GstFlowReturn onNewPrerollProxy(GstAppSink *appsink, gpointer userData);
 	static GstFlowReturn onNewSampleProxy(GstAppSink *appsink, gpointer userData);
@@ -51,8 +52,11 @@ private:
 	struct AppSinkData;
 	struct AsyncData;
 	struct AppSinkEventData;
+	struct BusMessageData;
 
 	void handleAsync();
+
+	void onBusMessage(GstMessageType);
 
 	void onSetup(
 		AppSinkData*,
@@ -91,6 +95,8 @@ private:
 	void cleanup();
 
 private:
+	Napi::FunctionReference _eosCallback;
+
 	GstElement* _pipeline;
 
 	struct AppSinkData {
