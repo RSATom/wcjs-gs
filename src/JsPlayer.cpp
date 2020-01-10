@@ -4,7 +4,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 struct JsPlayer::AsyncData
 {
-	virtual ~AsyncData() {};
+	virtual ~AsyncData() {}
 
 	virtual void process(JsPlayer*) = 0;
 };
