@@ -1,58 +1,44 @@
 #include "JsPlayer.h"
 
+#include <cassert>
+#include <optional>
 
-///////////////////////////////////////////////////////////////////////////////
-struct JsPlayer::AsyncData
+#include <glib.h>
+
+
+namespace {
+
+enum class SinkType
 {
-	virtual ~AsyncData() {}
-
-	virtual void process(JsPlayer*) = 0;
+	Audio,
+	Video,
+	Other,
 };
 
-///////////////////////////////////////////////////////////////////////////////
-struct JsPlayer::AppSinkEventData : public JsPlayer::AsyncData
-{
-	AppSinkEventData(GstAppSink* appSink, JsPlayer::AppSinkEvent event) :
-		appSink(appSink), event(event) {}
-
-	void process(JsPlayer*);
-
-	GstAppSink* appSink;
-	const JsPlayer::AppSinkEvent event;
-};
-
-void JsPlayer::AppSinkEventData::process(JsPlayer* player)
-{
-	switch(event) {
-	case JsPlayer::AppSinkEvent::NewPreroll:
-		player->onNewPreroll(appSink);
-		break;
-	case JsPlayer::AppSinkEvent::NewSample:
-		player->onNewSample(appSink);
-		break;
-	case JsPlayer::AppSinkEvent::Eos:
-		player->onEos(appSink);
-		break;
-	default:
-		break;
-	}
 }
 
-///////////////////////////////////////////////////////////////////////////////
-struct JsPlayer::BusMessageData : public JsPlayer::AsyncData
-{
-	BusMessageData(GstMessageType type) :
-		type(type) {}
+struct JsPlayer::AppSinkData {
+	AppSinkData(Napi::FunctionReference&& callback) :
+		callback(std::move(callback)) {}
+	AppSinkData(const AppSinkData& d) = delete;
+	AppSinkData(AppSinkData&& d) :
+		type(d.type),
+		prerolled(d.prerolled),
+		firstSample(d.firstSample),
+		eos(d.eos),
+		callback(std::move(d.callback)) {}
 
-	void process(JsPlayer*);
+	std::optional<SinkType> type;
+	std::string mediaType;
+	std::optional<GstAudioInfo> audioInfo;
+	std::optional<GstVideoInfo> videoInfo;
 
-	const GstMessageType type;
+	bool prerolled = false;
+	bool firstSample = true;
+	bool eos = false;
+
+	Napi::FunctionReference callback;
 };
-
-void JsPlayer::BusMessageData::process(JsPlayer* player)
-{
-	player->onBusMessage(type);
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 Napi::FunctionReference JsPlayer::_jsConstructor;
@@ -125,10 +111,6 @@ void JsPlayer::cleanup()
 		gst_object_unref(_pipeline);
 		_pipeline = nullptr;
 	}
-
-	_asyncDataGuard.lock();
-	_asyncData.clear();
-	_asyncDataGuard.unlock();
 }
 
 void JsPlayer::close()
@@ -148,15 +130,32 @@ void JsPlayer::handleAsync()
 {
 	Napi::HandleScope scope(Env());
 
-	while(!_asyncData.empty()) {
-		std::deque<std::unique_ptr<AsyncData> > tmpData;
-		_asyncDataGuard.lock();
-		_asyncData.swap(tmpData);
-		_asyncDataGuard.unlock();
+	decltype(_appSinks)::size_type eosSinks = 0;
+	for(auto& pair: _appSinks) {
+		GstAppSink* appSink = pair.first;
+		AppSinkData& appSinkData = pair.second;
+		if(appSinkData.eos) continue;
 
-		for(const auto& i: tmpData) {
-			i->process(this);
+		if(!appSinkData.prerolled) {
+			if(g_autoptr(GstSample) prerollSample = gst_app_sink_try_pull_preroll(appSink, 0)) {
+				onSample(&appSinkData, prerollSample, true);
+				appSinkData.prerolled = true;
+			}
 		}
+
+		while(g_autoptr(GstSample) sample = gst_app_sink_try_pull_sample(appSink, 0)) {
+			onSample(&appSinkData, sample, false);
+		}
+
+		appSinkData.eos = gst_app_sink_is_eos(appSink);
+		if(appSinkData.eos) {
+			onEos(appSink);
+			++eosSinks;
+		}
+	}
+
+  if(eosSinks == _appSinks.size() && !_eosCallback.IsEmpty()) {
+		_eosCallback.Call({});
 	}
 }
 
@@ -164,22 +163,11 @@ GstBusSyncReply JsPlayer::onBusMessageProxy(GstBus*, GstMessage* message, gpoint
 {
 	JsPlayer* player = static_cast<JsPlayer*>(userData);
 
-	std::unique_ptr<BusMessageData> dataPtr;
-
-	const GstMessageType type = GST_MESSAGE_TYPE(message);
-	switch(type) {
+	switch(GST_MESSAGE_TYPE(message)) {
 	case GST_MESSAGE_EOS:
-		dataPtr.reset(new BusMessageData(type));
+		uv_async_send(player->_async);
 		break;
 	}
-
-	if(!dataPtr)
-		return GST_BUS_PASS;
-
-	player->_asyncDataGuard.lock();
-	player->_asyncData.emplace_back(std::move(dataPtr));
-	player->_asyncDataGuard.unlock();
-	uv_async_send(player->_async);
 
 	return GST_BUS_PASS;
 }
@@ -188,9 +176,6 @@ GstFlowReturn JsPlayer::onNewPrerollProxy(GstAppSink *appSink, gpointer userData
 {
 	JsPlayer* player = static_cast<JsPlayer*>(userData);
 
-	player->_asyncDataGuard.lock();
-	player->_asyncData.emplace_back(new AppSinkEventData(appSink, NewPreroll));
-	player->_asyncDataGuard.unlock();
 	uv_async_send(player->_async);
 
 	return GST_FLOW_OK;
@@ -200,10 +185,6 @@ GstFlowReturn JsPlayer::onNewSampleProxy(GstAppSink *appSink, gpointer userData)
 {
 	JsPlayer* player = static_cast<JsPlayer*>(userData);
 
-	player->_appSinks[appSink].waitingSample.clear();
-	player->_asyncDataGuard.lock();
-	player->_asyncData.emplace_back(new AppSinkEventData(appSink, NewSample));
-	player->_asyncDataGuard.unlock();
 	uv_async_send(player->_async);
 
 	return GST_FLOW_OK;
@@ -213,265 +194,84 @@ void JsPlayer::onEosProxy(GstAppSink* appSink, gpointer userData)
 {
 	JsPlayer* player = static_cast<JsPlayer*>(userData);
 
-	player->_asyncDataGuard.lock();
-	player->_asyncData.emplace_back(new AppSinkEventData(appSink, Eos));
-	player->_asyncDataGuard.unlock();
 	uv_async_send(player->_async);
 }
 
-void JsPlayer::onBusMessage(GstMessageType type)
+void JsPlayer::onSetup(JsPlayer::AppSinkData* sinkData)
 {
-	switch(type) {
-	case GST_MESSAGE_EOS:
-		if(!_eosCallback.IsEmpty())
-			_eosCallback.Call({});
-		break;
+	assert(sinkData && sinkData->type.has_value());
+	if(!sinkData || !sinkData->type.has_value() || sinkData->callback.IsEmpty())
+		return;
+
+	switch(sinkData->type.value()) {
+		case SinkType::Audio: {
+			assert(sinkData->audioInfo.has_value());
+			if(!sinkData->audioInfo.has_value())
+				break;
+
+			const GstAudioInfo& audioInfo = sinkData->audioInfo.value();
+
+			Napi::Object propertiesObject = Napi::Object::New(Env());
+			propertiesObject.Set("channels", ToJsValue(Env(), audioInfo.channels));
+			propertiesObject.Set("samplingRate", ToJsValue(Env(), audioInfo.rate));
+			propertiesObject.Set("sampleSize", ToJsValue(Env(), audioInfo.bpf));
+
+			sinkData->callback.Call({
+				ToJsValue(Env(), Setup),
+				ToJsValue(Env(), sinkData->mediaType),
+				propertiesObject,
+			});
+			break;
+		}
+		case SinkType::Video: {
+			assert(sinkData->videoInfo.has_value());
+			if(!sinkData->videoInfo.has_value())
+				break;
+
+			const GstVideoInfo& videoInfo = sinkData->videoInfo.value();
+
+			Napi::Object propertiesObject = Napi::Object::New(Env());
+			propertiesObject.Set("pixelFormat", ToJsValue(Env(), videoInfo.finfo->name));
+			propertiesObject.Set("width", ToJsValue(Env(), videoInfo.width));
+			propertiesObject.Set("height", ToJsValue(Env(), videoInfo.height));
+
+			sinkData->callback.Call({
+				ToJsValue(Env(), Setup),
+				ToJsValue(Env(), sinkData->mediaType),
+				propertiesObject,
+			});
+			break;
+		}
+		case SinkType::Other: {
+			Napi::Object propertiesObject = Napi::Object::New(Env());
+
+			sinkData->callback.Call({
+				ToJsValue(Env(), Setup),
+				ToJsValue(Env(), sinkData->mediaType),
+				propertiesObject,
+			});
+			break;
+		}
 	}
-}
-
-void JsPlayer::onSetup(
-	JsPlayer::AppSinkData* sinkData,
-	const GstVideoInfo& videoInfo)
-{
-	if(!sinkData)
-		return;
-
-	sinkData->firstSample = false;
-
-	if(sinkData->callback.IsEmpty())
-		return;
-
-	sinkData->callback.Call({
-		ToJsValue(Env(), Setup),
-		ToJsValue(Env(), videoInfo.finfo->name),
-		ToJsValue(Env(), videoInfo.width),
-		ToJsValue(Env(), videoInfo.height),
-		ToJsValue(Env(), videoInfo.finfo->format)
-	});
-}
-
-void JsPlayer::onSetup(
-	JsPlayer::AppSinkData* sinkData,
-	const GstAudioInfo& audioInfo)
-{
-	if(!sinkData)
-		return;
-
-	sinkData->firstSample = false;
-
-	if(sinkData->callback.IsEmpty())
-		return;
-
-	sinkData->callback.Call({
-		ToJsValue(Env(), Setup),
-		ToJsValue(Env(), audioInfo.channels),
-		ToJsValue(Env(), audioInfo.rate),
-		ToJsValue(Env(), audioInfo.bpf),
-	});
-}
-
-void JsPlayer::onSetup(
-	JsPlayer::AppSinkData* sinkData,
-	const gchar* type,
-	const gchar* format)
-{
-	if(!sinkData)
-		return;
-
-	sinkData->firstSample = false;
-
-	if(sinkData->callback.IsEmpty())
-		return;
-
-	sinkData->callback.Call({
-		ToJsValue(Env(), Setup),
-		ToJsValue(Env(), type),
-		ToJsValue(Env(), format),
-	});
-}
-
-void JsPlayer::onNewPreroll(GstAppSink* appSink)
-{
-	GstSample* sample = gst_app_sink_pull_preroll(appSink);
-
-	onSample(appSink, sample, true);
-
-	gst_sample_unref(sample);
-}
-
-void JsPlayer::onNewSample(GstAppSink* appSink)
-{
-	if(_appSinks[appSink].waitingSample.test_and_set())
-		return;
-
-	GstSample* sample = gst_app_sink_pull_sample(appSink);
-
-	_appSinks[appSink].waitingSample.test_and_set();
-
-	onSample(appSink, sample, false);
-
-	gst_sample_unref(sample);
 }
 
 void JsPlayer::onAudioSample(
 	AppSinkData* sinkData,
 	GstSample* sample,
-	bool preroll,
-	GstCaps* caps,
-	const gchar* format)
+	bool preroll)
 {
 	if(!sinkData || sinkData->callback.IsEmpty())
 		return;
 
 	GstBuffer* buffer = gst_sample_get_buffer(sample);
-
 	if(!buffer)
 		return;
-
-	if(0 == g_strcmp0(format, "x-raw")) {
-		GstAudioInfo audioInfo;
-		if(!gst_audio_info_from_caps(&audioInfo, caps))
-			return;
-
-		if(sinkData->firstSample)
-			onSetup(sinkData, audioInfo);
-
-		GstMapInfo mapInfo;
-		if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
-			Napi::Buffer<unsigned char> sample =
-				Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
-			Napi::Object sampleObject(Env(), sample);
-			sampleObject.Set("type", ToJsValue(Env(), "audio"));
-			sampleObject.Set("format", ToJsValue(Env(), "x-raw"));
-			sampleObject.Set("channels", ToJsValue(Env(), audioInfo.channels));
-			sampleObject.Set("rate", ToJsValue(Env(), audioInfo.rate));
-			sampleObject.Set("bpf", ToJsValue(Env(), audioInfo.bpf));
-
-			sinkData->callback.Call({
-				ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
-				sampleObject,
-			});
-			gst_buffer_unmap(buffer, &mapInfo);
-		}
-	} else {
-		if(sinkData->firstSample)
-			onSetup(sinkData, "audio", format);
-
-		GstMapInfo mapInfo;
-		if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
-			Napi::Buffer<unsigned char> sample =
-				Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
-			Napi::Object sampleObject(Env(), sample);
-			sampleObject.Set("type", ToJsValue(Env(), "audio"));
-			sampleObject.Set("format", ToJsValue(Env(), format));
-
-			sinkData->callback.Call({
-				ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
-				sampleObject,
-			});
-			gst_buffer_unmap(buffer, &mapInfo);
-		}
-	}
-}
-
-void JsPlayer::onVideoSample(
-	AppSinkData* sinkData,
-	GstSample* sample,
-	bool preroll,
-	GstCaps* caps,
-	const gchar* format)
-{
-	if(!sinkData || sinkData->callback.IsEmpty())
-		return;
-
-	GstBuffer* buffer = gst_sample_get_buffer(sample);
-
-	if(!buffer)
-		return;
-
-	if(0 == g_strcmp0(format, "x-raw")) {
-		GstVideoInfo videoInfo;
-		if(!gst_video_info_from_caps(&videoInfo, caps))
-			return;
-
-		if(sinkData->firstSample)
-			onSetup(sinkData, videoInfo);
-
-		GstMapInfo mapInfo;
-		if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
-			Napi::Buffer<unsigned char> frame =
-				Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
-			Napi::Object frameObject(Env(), frame);
-			frameObject.Set("type", ToJsValue(Env(), "video"));
-			frameObject.Set("format", ToJsValue(Env(), "x-raw"));
-			frameObject.Set("width", ToJsValue(Env(), videoInfo.width));
-			frameObject.Set("height", ToJsValue(Env(), videoInfo.height));
-
-			Napi::Array planesArray = Napi::Array::New(Env(), videoInfo.finfo->n_planes);
-			for(guint p = 0; p < videoInfo.finfo->n_planes; ++p)
-				planesArray.Set(p, ToJsValue(Env(), static_cast<int>(videoInfo.offset[p])));
-
-			frameObject.Set("planes", planesArray);
-
-			sinkData->callback.Call({
-				ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
-				frameObject,
-			});
-			gst_buffer_unmap(buffer, &mapInfo);
-		}
-	} else {
-		if(sinkData->firstSample)
-			onSetup(sinkData, "video", format);
-
-		GstMapInfo mapInfo;
-		if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
-			Napi::Buffer<unsigned char> frame =
-				Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
-			Napi::Object frameObject(Env(), frame);
-			frameObject.Set("type", ToJsValue(Env(), "video"));
-			frameObject.Set("format", ToJsValue(Env(), format));
-
-			sinkData->callback.Call({
-				ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
-				frameObject,
-			});
-			gst_buffer_unmap(buffer, &mapInfo);
-		}
-	}
-}
-
-void JsPlayer::onOtherSample(
-	AppSinkData* sinkData,
-	GstSample* sample,
-	bool preroll,
-	GstCaps* caps,
-	const gchar* capsName)
-{
-	if(!sinkData || sinkData->callback.IsEmpty())
-		return;
-
-	GstBuffer* buffer = gst_sample_get_buffer(sample);
-
-	if(!buffer)
-		return;
-
-	const gchar* format = g_strstr_len(capsName, -1, "/");
-	if(!format)
-		return;
-
-	std::string type(capsName, format - capsName);
-	++format;
-
-	if(sinkData->firstSample)
-		onSetup(sinkData, type.c_str(), format);
 
 	GstMapInfo mapInfo;
 	if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
 		Napi::Buffer<unsigned char> sample =
 			Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
 		Napi::Object sampleObject(Env(), sample);
-		sampleObject.Set("type", ToJsValue(Env(), type.c_str()));
-		sampleObject.Set("format", ToJsValue(Env(), format));
 
 		sinkData->callback.Call({
 			ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
@@ -481,30 +281,120 @@ void JsPlayer::onOtherSample(
 	}
 }
 
-void JsPlayer::onSample(GstAppSink* appSink, GstSample* sample, bool preroll)
+void JsPlayer::onVideoSample(
+	AppSinkData* sinkData,
+	GstSample* sample,
+	bool preroll)
 {
-	if(!appSink || !sample)
+	if(!sinkData || !sinkData->videoInfo || sinkData->callback.IsEmpty())
 		return;
 
-	auto it = _appSinks.find(appSink);
-	if(_appSinks.end() == it)
+	const GstVideoInfo& videoInfo = sinkData->videoInfo.value();
+
+	GstBuffer* buffer = gst_sample_get_buffer(sample);
+	if(!buffer)
 		return;
 
-	AppSinkData& sinkData = it->second;
+	GstMapInfo mapInfo;
+	if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
+		Napi::Buffer<unsigned char> sample =
+			Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
+		Napi::Object sampleObject(Env(), sample);
+		sampleObject.Set("width", ToJsValue(Env(), videoInfo.width));
+		sampleObject.Set("height", ToJsValue(Env(), videoInfo.height));
 
-	GstCaps* caps = gst_sample_get_caps(sample);
+		if(videoInfo.finfo->n_planes) {
+			Napi::Array planesArray = Napi::Array::New(Env(), videoInfo.finfo->n_planes);
+			for(guint p = 0; p < videoInfo.finfo->n_planes; ++p)
+				planesArray.Set(p, ToJsValue(Env(), static_cast<int>(videoInfo.offset[p])));
 
-	if(!caps)
+			sampleObject.Set("planes", planesArray);
+		}
+
+		sinkData->callback.Call({
+			ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
+			sampleObject,
+		});
+		gst_buffer_unmap(buffer, &mapInfo);
+	}
+}
+
+void JsPlayer::onOtherSample(
+	AppSinkData* sinkData,
+	GstSample* sample,
+	bool preroll)
+{
+	if(!sinkData || sinkData->callback.IsEmpty())
 		return;
 
-	GstStructure* capsStructure = gst_caps_get_structure(caps, 0);
-	const gchar* capsName = gst_structure_get_name(capsStructure);
-	if(g_str_has_prefix(capsName, "audio/"))
-		onAudioSample(&sinkData, sample, preroll, caps, capsName + sizeof("audio"));
-	else if(g_str_has_prefix(capsName, "video/"))
-		onVideoSample(&sinkData, sample, preroll, caps, capsName + sizeof("video"));
-	else
-		onOtherSample(&sinkData, sample, preroll, caps, capsName);
+	GstBuffer* buffer = gst_sample_get_buffer(sample);
+	if(!buffer)
+		return;
+
+	GstMapInfo mapInfo;
+	if(gst_buffer_map(buffer, &mapInfo, GST_MAP_READ)) {
+		Napi::Buffer<unsigned char> sample =
+			Napi::Buffer<unsigned char>::Copy(Env(), mapInfo.data, mapInfo.size);
+		Napi::Object sampleObject(Env(), sample);
+
+		sinkData->callback.Call({
+			ToJsValue(Env(), (preroll ? NewPreroll : NewSample)),
+			sampleObject,
+		});
+		gst_buffer_unmap(buffer, &mapInfo);
+	}
+}
+
+void JsPlayer::onSample(
+	AppSinkData* sinkData,
+	GstSample* sample,
+	bool preroll)
+{
+	if(!sample)
+		return;
+
+	if(!sinkData->type) {
+		const gchar* capsName = "";
+		GstCaps* caps = gst_sample_get_caps(sample);
+		if(caps) {
+			GstStructure* capsStructure = gst_caps_get_structure(caps, 0);
+			capsName = gst_structure_get_name(capsStructure);
+			sinkData->mediaType = capsName;
+		}
+
+		if(g_str_has_prefix(capsName, "audio/")) {
+			sinkData->type = SinkType::Audio;
+			GstAudioInfo audioInfo;
+			if(gst_audio_info_from_caps(&audioInfo, caps)) {
+				sinkData->audioInfo.emplace(audioInfo);
+			}
+		} else if(g_str_has_prefix(capsName, "video/")) {
+			sinkData->type = SinkType::Video;
+			GstVideoInfo videoInfo;
+			if(gst_video_info_from_caps(&videoInfo, caps)) {
+				sinkData->videoInfo.emplace(videoInfo);
+			}
+		} else {
+			sinkData->type = SinkType::Other;
+		}
+	}
+
+	if(sinkData->firstSample) {
+		onSetup(sinkData);
+		sinkData->firstSample = false;
+	}
+
+	switch(*sinkData->type) {
+	case SinkType::Audio:
+		onAudioSample(sinkData, sample, preroll);
+		break;
+	case SinkType::Video:
+		onVideoSample(sinkData, sample, preroll);
+		break;
+	case SinkType::Other:
+		onOtherSample(sinkData, sample, preroll);
+		break;
+	}
 }
 
 void JsPlayer::onEos(GstAppSink* appSink)
@@ -554,7 +444,7 @@ bool JsPlayer::addAppSinkCallback(
 
 	GstAppSink* appSink = GST_APP_SINK_CAST(sink);
 	if(!appSink)
-		return appSink;
+		return false;
 
 	if(callback.IsEmpty())
 		return false;
@@ -571,12 +461,10 @@ bool JsPlayer::addAppSinkCallback(
 		}
 		GstAppSinkCallbacks callbacks = { onEosProxy, onNewPrerollProxy, onNewSampleProxy };
 		gst_app_sink_set_callbacks(appSink, &callbacks, this, nullptr);
-		it = _appSinks.emplace(appSink, AppSinkData()).first;
+		_appSinks.emplace(appSink, Napi::Persistent(callback));
+	} else {
+		it->second.callback = std::move(Napi::Persistent(callback));
 	}
-
-	AppSinkData& sinkData = it->second;
-	sinkData.callback = Napi::Persistent(callback);
-	sinkData.waitingSample.test_and_set();
 
 	return true;
 }

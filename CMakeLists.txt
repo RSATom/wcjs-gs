@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 
 project(wcjs-gs)
 
-add_definitions(-std=c++14)
+add_definitions(-std=c++17)
 
 find_package(PkgConfig REQUIRED)
 pkg_search_module(GSTREAMER REQUIRED gstreamer-1.0)

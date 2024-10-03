@@ -39,7 +39,9 @@ private:
 
 	bool parseLaunch(const std::string& pipelineDescription);
 
-	bool addAppSinkCallback(const std::string& appSinkName, const Napi::Function& callback);
+	bool addAppSinkCallback(
+		const std::string& appSinkName,
+		const Napi::Function& callback);
 
 	void setState(unsigned state);
 
@@ -52,47 +54,29 @@ private:
 	static GstFlowReturn onNewSampleProxy(GstAppSink *appsink, gpointer userData);
 
 	struct AppSinkData;
-	struct AsyncData;
-	struct AppSinkEventData;
-	struct BusMessageData;
 
 	void handleAsync();
 
-	void onBusMessage(GstMessageType);
+	void onSetup(AppSinkData*);
 
-	void onSetup(
+	void onSample(
 		AppSinkData*,
-		const GstVideoInfo&);
-	void onSetup(
-		AppSinkData*,
-		const GstAudioInfo&);
-	void onSetup(
-		AppSinkData*,
-		const gchar* type,
-		const gchar* format);
-	void onNewPreroll(GstAppSink*);
-	void onNewSample(GstAppSink*);
-	void onEos(GstAppSink*);
-
-	void onSample(GstAppSink*, GstSample*, bool preroll);
+		GstSample*,
+		bool preroll);
 	void onVideoSample(
 		AppSinkData*,
 		GstSample*,
-		bool preroll,
-		GstCaps*,
-		const gchar* format);
+		bool preroll);
 	void onAudioSample(
 		AppSinkData*,
 		GstSample*,
-		bool preroll,
-		GstCaps*,
-		const gchar* format);
+		bool preroll);
 	void onOtherSample(
 		AppSinkData*,
 		GstSample*,
-		bool preroll,
-		GstCaps*,
-		const gchar* capsName);
+		bool preroll);
+
+	void onEos(GstAppSink*);
 
 	void cleanup();
 
@@ -101,23 +85,9 @@ private:
 
 	GstElement* _pipeline;
 
-	struct AppSinkData {
-		AppSinkData() :
-			firstSample(true)
-			{ waitingSample.test_and_set(); }
-		AppSinkData(const AppSinkData& d) = delete;
-		AppSinkData(AppSinkData&& d) :
-			firstSample(true), callback(std::move(d.callback))
-			{ waitingSample.test_and_set(); }
-
-		bool firstSample;
-		std::atomic_flag waitingSample;
-		Napi::FunctionReference callback;
-	};
-
+	struct AppSinkData;
 	std::map<GstAppSink*, AppSinkData> _appSinks;
 
 	uv_async_t* _async = nullptr;
-	std::mutex _asyncDataGuard;
-	std::deque<std::unique_ptr<AsyncData>> _asyncData;
+
 };
