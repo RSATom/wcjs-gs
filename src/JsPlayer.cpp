@@ -562,7 +562,13 @@ bool JsPlayer::addAppSinkCallback(
 	auto it = _appSinks.find(appSink);
 	if(_appSinks.end() == it) {
 		gst_app_sink_set_drop(appSink, true);
-		gst_app_sink_set_max_buffers(appSink, 1);
+		if(
+			!gst_app_sink_get_max_bytes(appSink) &&
+			!gst_app_sink_get_max_buffers(appSink) &&
+			!gst_app_sink_get_max_time(appSink)
+		) {
+			gst_app_sink_set_max_buffers(appSink, 1);
+		}
 		GstAppSinkCallbacks callbacks = { onEosProxy, onNewPrerollProxy, onNewSampleProxy };
 		gst_app_sink_set_callbacks(appSink, &callbacks, this, nullptr);
 		it = _appSinks.emplace(appSink, AppSinkData()).first;
