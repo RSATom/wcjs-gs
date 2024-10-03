@@ -19,6 +19,6 @@
     "node-addon-api-helpers": "*"
   },
   "scripts": {
-    "install": "node rebuild.js"
+    "install": "npx cmake-js compile"
   }
 }

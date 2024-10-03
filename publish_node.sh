@@ -2,7 +2,7 @@
 
 set -e
 
-./build_node.sh
+npm install
 
 rm -r ./dist || true
 mkdir dist
