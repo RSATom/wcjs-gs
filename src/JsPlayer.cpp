@@ -107,7 +107,11 @@ void JsPlayer::cleanup()
 	if(_pipeline) {
 		setState(GST_STATE_NULL);
 
+		for(const auto& pair: _appSinks) {
+			gst_object_unref(pair.first);
+		}
 		_appSinks.clear();
+
 		gst_object_unref(_pipeline);
 		_pipeline = nullptr;
 	}
@@ -438,7 +442,7 @@ bool JsPlayer::addAppSinkCallback(
 	if(!_pipeline || appSinkName.empty())
 		return false;
 
-	GstElement* sink = gst_bin_get_by_name(GST_BIN(_pipeline), appSinkName.c_str());
+	g_autoptr(GstElement) sink = gst_bin_get_by_name(GST_BIN(_pipeline), appSinkName.c_str());
 	if(!sink)
 		return false;
 
@@ -468,6 +472,7 @@ bool JsPlayer::addAppSinkCallback(
 		GstAppSinkCallbacks callbacks = { onEosProxy, onNewPrerollProxy, onNewSampleProxy };
 		gst_app_sink_set_callbacks(appSink, &callbacks, this, nullptr);
 		_appSinks.emplace(appSink, Napi::Persistent(callback));
+		sink = nullptr;
 	} else {
 		it->second.callback = std::move(Napi::Persistent(callback));
 	}
