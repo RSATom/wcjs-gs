@@ -125,7 +125,7 @@ void JsPlayer::close()
 	uv_close(
 		reinterpret_cast<uv_handle_t*>(_async),
 		[] (uv_handle_s* handle) {
-			delete static_cast<uv_handle_t*>(handle);
+			delete reinterpret_cast<uv_async_t*>(handle);
 		});
 	_async = nullptr;
 }
