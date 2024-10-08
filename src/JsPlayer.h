@@ -43,6 +43,11 @@ private:
 		const std::string& appSinkName,
 		const Napi::Function& callback);
 
+	bool addCapsProbe(
+		const std::string& elementName,
+		const std::string& padName,
+		const Napi::Function& callback);
+
 	void setState(unsigned state);
 
 	void sendEos();
@@ -73,6 +78,9 @@ private:
 
 	void onEos(GstAppSink*);
 
+	void handleQueue();
+	void onCapsChanged(GstPad* pad, GstCaps* caps);
+
 	void cleanup();
 
 private:
@@ -83,6 +91,14 @@ private:
 	struct AppSinkData;
 	std::map<GstAppSink*, AppSinkData> _appSinks;
 
-	uv_async_t* _async = nullptr;
+	struct PadProbeData;
+	std::map<GstPad*, PadProbeData> _padsProbes;
 
+	uv_async_t* _queueAsync = nullptr;
+	struct AsyncEvent;
+	struct CapsChanged;
+	std::mutex _queueGuard;
+	std::deque<std::unique_ptr<AsyncEvent>> _queue;
+
+	uv_async_t* _async = nullptr;
 };

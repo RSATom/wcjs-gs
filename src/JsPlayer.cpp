@@ -66,6 +66,53 @@ struct JsPlayer::AppSinkData {
 	Napi::FunctionReference callback;
 };
 
+struct JsPlayer::PadProbeData {
+	PadProbeData(Napi::FunctionReference&& callback) :
+		callback(std::move(callback)) {}
+	PadProbeData(const AppSinkData& d) = delete;
+	PadProbeData(AppSinkData&& d) :
+		callback(std::move(d.callback)) {}
+
+	gulong probeId = 0;
+	Napi::FunctionReference callback;
+};
+
+struct JsPlayer::AsyncEvent
+{
+	virtual ~AsyncEvent() {};
+
+	virtual void forwardTo(JsPlayer*) const = 0;
+};
+
+struct JsPlayer::CapsChanged: public JsPlayer::AsyncEvent
+{
+	CapsChanged(GstPad* pad, GstCaps* caps) :
+		pad(GST_PAD(gst_object_ref(pad))),
+		caps(gst_caps_ref(caps)) {}
+	CapsChanged(CapsChanged&) = delete;
+	CapsChanged(CapsChanged&& source) :
+		pad(source.pad),
+		caps(source.caps)
+	{
+		source.pad = nullptr;
+		source.caps = nullptr;
+	}
+	~CapsChanged() override {
+		if(caps)
+			gst_caps_unref(caps);
+
+		if(pad)
+			gst_object_unref(pad);
+	}
+
+	void forwardTo(JsPlayer* player) const override {
+		player->onCapsChanged(pad, caps);
+	}
+
+	GstPad* pad;
+	GstCaps* caps;
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 Napi::FunctionReference JsPlayer::_jsConstructor;
 
@@ -88,6 +135,7 @@ Napi::Object JsPlayer::InitJsApi(Napi::Env env, Napi::Object exports)
 			InstanceValue("AppSinkEos", ToJsValue(env, Eos)),
 			CLASS_METHOD("parseLaunch", &JsPlayer::parseLaunch),
 			CLASS_METHOD("addAppSinkCallback", &JsPlayer::addAppSinkCallback),
+			CLASS_METHOD("addCapsProbe", &JsPlayer::addCapsProbe),
 			CLASS_METHOD("setState", &JsPlayer::setState),
 			CLASS_METHOD("sendEos", &JsPlayer::sendEos),
 		}
@@ -113,6 +161,15 @@ JsPlayer::JsPlayer(const Napi::CallbackInfo& info) :
 
 	uv_loop_t* loop = uv_default_loop();
 
+	_queueAsync = new uv_async_t;
+	uv_async_init(loop, _queueAsync,
+		[] (uv_async_t* handle) {
+			if(handle->data)
+				reinterpret_cast<JsPlayer*>(handle->data)->handleQueue();
+		}
+	);
+	_queueAsync->data = this;
+
 	_async = new uv_async_t;
 	uv_async_init(loop, _async,
 		[] (uv_async_t* handle) {
@@ -133,6 +190,11 @@ void JsPlayer::cleanup()
 	if(_pipeline) {
 		setState(GST_STATE_NULL);
 
+		for(const auto& pair: _padsProbes) {
+			gst_object_unref(pair.first);
+		}
+		_padsProbes.clear();
+
 		for(const auto& pair: _appSinks) {
 			gst_object_unref(pair.first);
 		}
@@ -146,6 +208,14 @@ void JsPlayer::cleanup()
 void JsPlayer::close()
 {
 	cleanup();
+
+	_queueAsync->data = nullptr;
+	uv_close(
+		reinterpret_cast<uv_handle_t*>(_queueAsync),
+		[] (uv_handle_s* handle) {
+			delete reinterpret_cast<uv_async_t*>(handle);
+		});
+	_queueAsync = nullptr;
 
 	_async->data = nullptr;
 	uv_close(
@@ -406,6 +476,73 @@ void JsPlayer::onEos(GstAppSink* appSink)
 	});
 }
 
+void JsPlayer::onCapsChanged(GstPad* pad, GstCaps* caps)
+{
+	if(!pad || !caps)
+		return;
+
+	auto it = _padsProbes.find(pad);
+	if(_padsProbes.end() == it)
+		return;
+
+	if(it->second.callback.IsEmpty())
+		return;
+
+	Napi::HandleScope scope(Env());
+
+	GstStructure* capsStructure = gst_caps_get_structure(caps, 0);
+	const gchar* capsName = gst_structure_get_name(capsStructure);
+	const StreamType type = GetStreamType(capsName);
+	switch(type) {
+		case StreamType::Audio: {
+			GstAudioInfo audioInfo;
+			if(gst_audio_info_from_caps(&audioInfo, caps)) {
+				Napi::Object propertiesObject = Napi::Object::New(Env());
+				SetAudioProperties(&propertiesObject, audioInfo);
+
+				it->second.callback.Call({
+					ToJsValue(Env(), capsName),
+					propertiesObject,
+				});
+			}
+			break;
+		}
+		case StreamType::Video: {
+			GstVideoInfo videoInfo;
+			if(gst_video_info_from_caps(&videoInfo, caps)) {
+				Napi::Object propertiesObject = Napi::Object::New(Env());
+				SetVideoProperties(&propertiesObject, videoInfo);
+
+				it->second.callback.Call({
+					ToJsValue(Env(), capsName),
+					propertiesObject,
+				});
+			}
+			break;
+		}
+		case StreamType::Other: {
+			Napi::Object propertiesObject = Napi::Object::New(Env());
+
+			it->second.callback.Call({
+				ToJsValue(Env(), capsName),
+				propertiesObject,
+			});
+			break;
+		}
+	}
+}
+
+void JsPlayer::handleQueue()
+{
+	_queueGuard.lock();
+	std::deque<std::unique_ptr<AsyncEvent>> tmpQueue = std::move(_queue);
+	_queueGuard.unlock();
+
+	for(const std::unique_ptr<AsyncEvent>& event: tmpQueue) {
+		event->forwardTo(this);
+	}
+}
+
 bool JsPlayer::parseLaunch(const std::string& pipelineDescription)
 {
 	cleanup();
@@ -484,6 +621,56 @@ bool JsPlayer::addAppSinkCallback(
 	} else {
 		it->second.callback = std::move(Napi::Persistent(callback));
 	}
+
+	return true;
+}
+
+bool JsPlayer::addCapsProbe(
+	const std::string& elementName,
+	const std::string& padName,
+	const Napi::Function& callback)
+{
+	if(!_pipeline || elementName.empty() || padName.empty())
+		return false;
+
+	g_autoptr(GstElement) element = gst_bin_get_by_name(GST_BIN(_pipeline), elementName.c_str());
+	if(!element)
+		return false;
+
+	g_autoptr(GstPad) pad = gst_element_get_static_pad(element, padName.c_str());
+	if(!pad)
+		return false;
+
+	if(_padsProbes.find(pad) != _padsProbes.end())
+		return false;
+
+	gulong probeId = gst_pad_add_probe(
+			pad,
+			GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+			[] (GstPad* pad, GstPadProbeInfo* info, gpointer userData) -> GstPadProbeReturn {
+					if(GST_EVENT_TYPE(GST_PAD_PROBE_INFO_DATA(info)) != GST_EVENT_CAPS)
+							return GST_PAD_PROBE_OK;
+
+					GstEvent* event = GST_EVENT_CAST(GST_PAD_PROBE_INFO_DATA(info));
+					g_autoptr(GstCaps) caps = nullptr;
+					gst_event_parse_caps(event, &caps);
+
+					JsPlayer* player = static_cast<JsPlayer*>(userData);
+
+					std::lock_guard(player->_queueGuard);
+					player->_queue.emplace_back(std::make_unique<CapsChanged>(pad, caps));
+					uv_async_send(player->_queueAsync);
+
+					return GST_PAD_PROBE_OK;
+			},
+			this,
+			nullptr);
+	if(!probeId) {
+		return false;
+	}
+
+	_padsProbes.emplace(pad, Napi::Persistent(callback));
+	pad = nullptr;
 
 	return true;
 }
