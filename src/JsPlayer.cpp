@@ -73,7 +73,6 @@ struct JsPlayer::PadProbeData {
 	PadProbeData(AppSinkData&& d) :
 		callback(std::move(d.callback)) {}
 
-	gulong probeId = 0;
 	Napi::FunctionReference callback;
 };
 
