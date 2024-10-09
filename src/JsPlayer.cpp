@@ -589,20 +589,6 @@ bool JsPlayer::addAppSinkCallback(
 
 	auto it = _appSinks.find(appSink);
 	if(_appSinks.end() == it) {
-		gst_app_sink_set_drop(appSink, true);
-#if GST_CHECK_VERSION(1, 24, 0)
-		if(
-			!gst_app_sink_get_max_bytes(appSink) &&
-			!gst_app_sink_get_max_buffers(appSink) &&
-			!gst_app_sink_get_max_time(appSink)
-		) {
-			gst_app_sink_set_max_buffers(appSink, 1);
-		}
-#else
-		if(!gst_app_sink_get_max_buffers(appSink)) {
-			gst_app_sink_set_max_buffers(appSink, 1);
-		}
-#endif
 		GstAppSinkCallbacks callbacks = {
 			[] (GstAppSink*, gpointer userData) {
 				uv_async_send(static_cast<JsPlayer*>(userData)->_async);
