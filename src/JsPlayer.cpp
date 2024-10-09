@@ -629,7 +629,7 @@ bool JsPlayer::addCapsProbe(
 	if(_padsProbes.find(pad) != _padsProbes.end())
 		return false;
 
-	gulong probeId = gst_pad_add_probe(
+	const gulong probeId = gst_pad_add_probe(
 			pad,
 			GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
 			[] (GstPad* pad, GstPadProbeInfo* info, gpointer userData) -> GstPadProbeReturn {
@@ -650,9 +650,8 @@ bool JsPlayer::addCapsProbe(
 			},
 			this,
 			nullptr);
-	if(!probeId) {
+	if(!probeId)
 		return false;
-	}
 
 	_padsProbes.emplace(pad, Napi::Persistent(callback));
 	pad = nullptr;
