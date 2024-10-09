@@ -15,6 +15,32 @@ enum class StreamType
 	Other,
 };
 
+StreamType GetStreamType(const gchar* capsName) {
+	if(g_str_has_prefix(capsName, "audio/"))
+		return StreamType::Audio;
+	else if(g_str_has_prefix(capsName, "video/"))
+		return StreamType::Video;
+	else
+		return StreamType::Other;
+}
+
+void SetAudioProperties(Napi::Object* object, const GstAudioInfo& audioInfo) {
+	if(audioInfo.channels)
+		object->Set("channels", ToJsValue(object->Env(), audioInfo.channels));
+	if(audioInfo.rate)
+		object->Set("samplingRate", ToJsValue(object->Env(), audioInfo.rate));
+	if(audioInfo.bpf)
+		object->Set("sampleSize", ToJsValue(object->Env(), audioInfo.bpf));
+}
+
+void SetVideoProperties(Napi::Object* object, const GstVideoInfo& videoInfo) {
+	object->Set("pixelFormat", ToJsValue(object->Env(), videoInfo.finfo->name));
+	if(videoInfo.width)
+		object->Set("width", ToJsValue(object->Env(), videoInfo.width));
+	if(videoInfo.height)
+		object->Set("height", ToJsValue(object->Env(), videoInfo.height));
+}
+
 }
 
 struct JsPlayer::AppSinkData {
@@ -178,9 +204,7 @@ void JsPlayer::onSetup(JsPlayer::AppSinkData* sinkData)
 			const GstAudioInfo& audioInfo = sinkData->audioInfo.value();
 
 			Napi::Object propertiesObject = Napi::Object::New(Env());
-			propertiesObject.Set("channels", ToJsValue(Env(), audioInfo.channels));
-			propertiesObject.Set("samplingRate", ToJsValue(Env(), audioInfo.rate));
-			propertiesObject.Set("sampleSize", ToJsValue(Env(), audioInfo.bpf));
+			SetAudioProperties(&propertiesObject, audioInfo);
 
 			sinkData->callback.Call({
 				ToJsValue(Env(), Setup),
@@ -197,9 +221,7 @@ void JsPlayer::onSetup(JsPlayer::AppSinkData* sinkData)
 			const GstVideoInfo& videoInfo = sinkData->videoInfo.value();
 
 			Napi::Object propertiesObject = Napi::Object::New(Env());
-			propertiesObject.Set("pixelFormat", ToJsValue(Env(), videoInfo.finfo->name));
-			propertiesObject.Set("width", ToJsValue(Env(), videoInfo.width));
-			propertiesObject.Set("height", ToJsValue(Env(), videoInfo.height));
+			SetVideoProperties(&propertiesObject, videoInfo);
 
 			sinkData->callback.Call({
 				ToJsValue(Env(), Setup),
@@ -328,20 +350,24 @@ void JsPlayer::onSample(
 			sinkData->mediaType = capsName;
 		}
 
-		if(g_str_has_prefix(capsName, "audio/")) {
-			sinkData->type = StreamType::Audio;
-			GstAudioInfo audioInfo;
-			if(gst_audio_info_from_caps(&audioInfo, caps)) {
-				sinkData->audioInfo.emplace(audioInfo);
+		sinkData->type = GetStreamType(capsName);
+		switch(*sinkData->type) {
+			case StreamType::Audio: {
+				GstAudioInfo audioInfo;
+				if(gst_audio_info_from_caps(&audioInfo, caps)) {
+					sinkData->audioInfo.emplace(audioInfo);
+				}
+				break;
 			}
-		} else if(g_str_has_prefix(capsName, "video/")) {
-			sinkData->type = StreamType::Video;
-			GstVideoInfo videoInfo;
-			if(gst_video_info_from_caps(&videoInfo, caps)) {
-				sinkData->videoInfo.emplace(videoInfo);
+			case StreamType::Video: {
+				GstVideoInfo videoInfo;
+				if(gst_video_info_from_caps(&videoInfo, caps)) {
+					sinkData->videoInfo.emplace(videoInfo);
+				}
+				break;
 			}
-		} else {
-			sinkData->type = StreamType::Other;
+			case StreamType::Other:
+				break;
 		}
 	}
 
