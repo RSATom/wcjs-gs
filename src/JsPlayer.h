@@ -96,7 +96,7 @@ private:
 
 	uv_async_t* _queueAsync = nullptr;
 	struct AsyncEvent;
-	struct CapsChanged;
+	struct CapsChangedEvent;
 	std::mutex _queueGuard;
 	std::deque<std::unique_ptr<AsyncEvent>> _queue;
 

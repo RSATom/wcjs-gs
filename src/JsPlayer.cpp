@@ -83,20 +83,20 @@ struct JsPlayer::AsyncEvent
 	virtual void forwardTo(JsPlayer*) const = 0;
 };
 
-struct JsPlayer::CapsChanged: public JsPlayer::AsyncEvent
+struct JsPlayer::CapsChangedEvent : public JsPlayer::AsyncEvent
 {
-	CapsChanged(GstPad* pad, GstCaps* caps) :
+	CapsChangedEvent(GstPad* pad, GstCaps* caps) :
 		pad(GST_PAD(gst_object_ref(pad))),
 		caps(gst_caps_ref(caps)) {}
-	CapsChanged(CapsChanged&) = delete;
-	CapsChanged(CapsChanged&& source) :
+	CapsChangedEvent(CapsChangedEvent&) = delete;
+	CapsChangedEvent(CapsChangedEvent&& source) :
 		pad(source.pad),
 		caps(source.caps)
 	{
 		source.pad = nullptr;
 		source.caps = nullptr;
 	}
-	~CapsChanged() override {
+	~CapsChangedEvent() override {
 		if(caps)
 			gst_caps_unref(caps);
 
@@ -643,7 +643,7 @@ bool JsPlayer::addCapsProbe(
 					JsPlayer* player = static_cast<JsPlayer*>(userData);
 
 					std::lock_guard(player->_queueGuard);
-					player->_queue.emplace_back(std::make_unique<CapsChanged>(pad, caps));
+					player->_queue.emplace_back(std::make_unique<CapsChangedEvent>(pad, caps));
 					uv_async_send(player->_queueAsync);
 
 					return GST_PAD_PROBE_OK;
