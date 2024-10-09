@@ -660,7 +660,7 @@ bool JsPlayer::addCapsProbe(
 							return GST_PAD_PROBE_OK;
 
 					GstEvent* event = GST_EVENT_CAST(GST_PAD_PROBE_INFO_DATA(info));
-					g_autoptr(GstCaps) caps = nullptr;
+					GstCaps* caps = nullptr;
 					gst_event_parse_caps(event, &caps);
 
 					JsPlayer* player = static_cast<JsPlayer*>(userData);
