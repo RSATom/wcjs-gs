@@ -78,6 +78,13 @@ struct JsPlayer::PadProbeData {
 
 struct JsPlayer::AsyncEvent
 {
+protected:
+	AsyncEvent() = default;
+
+public:
+	AsyncEvent(const AsyncEvent&) = delete;
+	AsyncEvent& operator = (const AsyncEvent&) = delete;
+
 	virtual ~AsyncEvent() {};
 
 	virtual void forwardTo(JsPlayer*) const = 0;
@@ -88,7 +95,6 @@ struct JsPlayer::CapsChangedEvent : public JsPlayer::AsyncEvent
 	CapsChangedEvent(GstPad* pad, GstCaps* caps) :
 		pad(GST_PAD(gst_object_ref(pad))),
 		caps(gst_caps_ref(caps)) {}
-	CapsChangedEvent(CapsChangedEvent&) = delete;
 	CapsChangedEvent(CapsChangedEvent&& source) :
 		pad(source.pad),
 		caps(source.caps)
