@@ -80,6 +80,7 @@ private:
 
 	void handleQueue();
 	void onCapsChanged(GstPad* pad, GstCaps* caps);
+	void onEos();
 
 	void cleanup();
 
@@ -97,6 +98,7 @@ private:
 	uv_async_t* _queueAsync = nullptr;
 	struct AsyncEvent;
 	struct CapsChangedEvent;
+	struct EosEvent;
 	std::mutex _queueGuard;
 	std::deque<std::unique_ptr<AsyncEvent>> _queue;
 

@@ -112,6 +112,13 @@ struct JsPlayer::CapsChangedEvent : public JsPlayer::AsyncEvent
 	GstCaps* caps;
 };
 
+struct JsPlayer::EosEvent : public JsPlayer::AsyncEvent
+{
+	void forwardTo(JsPlayer* player) const override {
+		player->onEos();
+	}
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 Napi::FunctionReference JsPlayer::_jsConstructor;
 
@@ -229,7 +236,6 @@ void JsPlayer::handleAsync()
 {
 	Napi::HandleScope scope(Env());
 
-	decltype(_appSinks)::size_type eosSinks = 0;
 	for(auto& pair: _appSinks) {
 		GstAppSink* appSink = pair.first;
 		AppSinkData& appSinkData = pair.second;
@@ -249,12 +255,7 @@ void JsPlayer::handleAsync()
 		appSinkData.eos = gst_app_sink_is_eos(appSink);
 		if(appSinkData.eos) {
 			onEos(appSink);
-			++eosSinks;
 		}
-	}
-
-  if(eosSinks == _appSinks.size() && !_eosCallback.IsEmpty()) {
-		_eosCallback.Call({});
 	}
 }
 
@@ -531,6 +532,17 @@ void JsPlayer::onCapsChanged(GstPad* pad, GstCaps* caps)
 	}
 }
 
+void JsPlayer::onEos()
+{
+	if(_eosCallback.IsEmpty())
+		return;
+
+	handleAsync(); // just in case to don't miss queued samples
+
+	Napi::HandleScope scope(Env());
+	_eosCallback.Call({});
+}
+
 void JsPlayer::handleQueue()
 {
 	_queueGuard.lock();
@@ -556,8 +568,13 @@ bool JsPlayer::parseLaunch(const std::string& pipelineDescription)
 	gst_bus_set_sync_handler(
 		bus,
 		[] (GstBus*, GstMessage* message, gpointer userData) -> GstBusSyncReply {
-			if(GST_MESSAGE_TYPE(message) == GST_MESSAGE_EOS)
-				uv_async_send(static_cast<JsPlayer*>(userData)->_async);
+			if(GST_MESSAGE_TYPE(message) == GST_MESSAGE_EOS) {
+				JsPlayer* player = static_cast<JsPlayer*>(userData);
+
+				std::lock_guard(player->_queueGuard);
+				player->_queue.emplace_back(std::make_unique<EosEvent>());
+				uv_async_send(player->_queueAsync);
+			}
 
 			return GST_BUS_PASS;
 		},
