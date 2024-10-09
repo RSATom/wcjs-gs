@@ -48,11 +48,6 @@ private:
 	void sendEos();
 
 private:
-	static GstBusSyncReply onBusMessageProxy(GstBus*, GstMessage*, gpointer userData);
-	static void onEosProxy(GstAppSink* appSink, gpointer userData);
-	static GstFlowReturn onNewPrerollProxy(GstAppSink *appsink, gpointer userData);
-	static GstFlowReturn onNewSampleProxy(GstAppSink *appsink, gpointer userData);
-
 	struct AppSinkData;
 
 	void handleAsync();

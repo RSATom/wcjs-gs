@@ -163,44 +163,6 @@ void JsPlayer::handleAsync()
 	}
 }
 
-GstBusSyncReply JsPlayer::onBusMessageProxy(GstBus*, GstMessage* message, gpointer userData)
-{
-	JsPlayer* player = static_cast<JsPlayer*>(userData);
-
-	switch(GST_MESSAGE_TYPE(message)) {
-	case GST_MESSAGE_EOS:
-		uv_async_send(player->_async);
-		break;
-	}
-
-	return GST_BUS_PASS;
-}
-
-GstFlowReturn JsPlayer::onNewPrerollProxy(GstAppSink *appSink, gpointer userData)
-{
-	JsPlayer* player = static_cast<JsPlayer*>(userData);
-
-	uv_async_send(player->_async);
-
-	return GST_FLOW_OK;
-}
-
-GstFlowReturn JsPlayer::onNewSampleProxy(GstAppSink *appSink, gpointer userData)
-{
-	JsPlayer* player = static_cast<JsPlayer*>(userData);
-
-	uv_async_send(player->_async);
-
-	return GST_FLOW_OK;
-}
-
-void JsPlayer::onEosProxy(GstAppSink* appSink, gpointer userData)
-{
-	JsPlayer* player = static_cast<JsPlayer*>(userData);
-
-	uv_async_send(player->_async);
-}
-
 void JsPlayer::onSetup(JsPlayer::AppSinkData* sinkData)
 {
 	assert(sinkData && sinkData->type.has_value());
@@ -429,7 +391,16 @@ bool JsPlayer::parseLaunch(const std::string& pipelineDescription)
 		return false;
 
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(_pipeline));
-	gst_bus_set_sync_handler(bus, onBusMessageProxy, this, nullptr);
+	gst_bus_set_sync_handler(
+		bus,
+		[] (GstBus*, GstMessage* message, gpointer userData) -> GstBusSyncReply {
+			if(GST_MESSAGE_TYPE(message) == GST_MESSAGE_EOS)
+				uv_async_send(static_cast<JsPlayer*>(userData)->_async);
+
+			return GST_BUS_PASS;
+		},
+		this,
+		nullptr);
 	gst_object_unref(bus);
 
 	return true;
@@ -469,7 +440,18 @@ bool JsPlayer::addAppSinkCallback(
 			gst_app_sink_set_max_buffers(appSink, 1);
 		}
 #endif
-		GstAppSinkCallbacks callbacks = { onEosProxy, onNewPrerollProxy, onNewSampleProxy };
+		GstAppSinkCallbacks callbacks = {
+			[] (GstAppSink*, gpointer userData) {
+				uv_async_send(static_cast<JsPlayer*>(userData)->_async);
+			},
+			[] (GstAppSink*, gpointer userData) -> GstFlowReturn {
+				uv_async_send(static_cast<JsPlayer*>(userData)->_async);
+				return GST_FLOW_OK;
+			},
+			[] (GstAppSink*, gpointer userData) -> GstFlowReturn {
+				uv_async_send(static_cast<JsPlayer*>(userData)->_async);
+				return GST_FLOW_OK;
+			} };
 		gst_app_sink_set_callbacks(appSink, &callbacks, this, nullptr);
 		_appSinks.emplace(appSink, Napi::Persistent(callback));
 		sink = nullptr;
