@@ -8,7 +8,7 @@
 
 namespace {
 
-enum class SinkType
+enum class StreamType
 {
 	Audio,
 	Video,
@@ -28,7 +28,7 @@ struct JsPlayer::AppSinkData {
 		eos(d.eos),
 		callback(std::move(d.callback)) {}
 
-	std::optional<SinkType> type;
+	std::optional<StreamType> type;
 	std::string mediaType;
 	std::optional<GstAudioInfo> audioInfo;
 	std::optional<GstVideoInfo> videoInfo;
@@ -208,7 +208,7 @@ void JsPlayer::onSetup(JsPlayer::AppSinkData* sinkData)
 		return;
 
 	switch(sinkData->type.value()) {
-		case SinkType::Audio: {
+		case StreamType::Audio: {
 			assert(sinkData->audioInfo.has_value());
 			if(!sinkData->audioInfo.has_value())
 				break;
@@ -227,7 +227,7 @@ void JsPlayer::onSetup(JsPlayer::AppSinkData* sinkData)
 			});
 			break;
 		}
-		case SinkType::Video: {
+		case StreamType::Video: {
 			assert(sinkData->videoInfo.has_value());
 			if(!sinkData->videoInfo.has_value())
 				break;
@@ -246,7 +246,7 @@ void JsPlayer::onSetup(JsPlayer::AppSinkData* sinkData)
 			});
 			break;
 		}
-		case SinkType::Other: {
+		case StreamType::Other: {
 			Napi::Object propertiesObject = Napi::Object::New(Env());
 
 			sinkData->callback.Call({
@@ -367,19 +367,19 @@ void JsPlayer::onSample(
 		}
 
 		if(g_str_has_prefix(capsName, "audio/")) {
-			sinkData->type = SinkType::Audio;
+			sinkData->type = StreamType::Audio;
 			GstAudioInfo audioInfo;
 			if(gst_audio_info_from_caps(&audioInfo, caps)) {
 				sinkData->audioInfo.emplace(audioInfo);
 			}
 		} else if(g_str_has_prefix(capsName, "video/")) {
-			sinkData->type = SinkType::Video;
+			sinkData->type = StreamType::Video;
 			GstVideoInfo videoInfo;
 			if(gst_video_info_from_caps(&videoInfo, caps)) {
 				sinkData->videoInfo.emplace(videoInfo);
 			}
 		} else {
-			sinkData->type = SinkType::Other;
+			sinkData->type = StreamType::Other;
 		}
 	}
 
@@ -389,13 +389,13 @@ void JsPlayer::onSample(
 	}
 
 	switch(*sinkData->type) {
-	case SinkType::Audio:
+	case StreamType::Audio:
 		onAudioSample(sinkData, sample, preroll);
 		break;
-	case SinkType::Video:
+	case StreamType::Video:
 		onVideoSample(sinkData, sample, preroll);
 		break;
-	case SinkType::Other:
+	case StreamType::Other:
 		onOtherSample(sinkData, sample, preroll);
 		break;
 	}
